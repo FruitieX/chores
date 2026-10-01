@@ -255,3 +255,26 @@ async fn database_restart_preserves_state_and_sessions() {
         1
     );
 }
+
+#[test]
+fn password_rotation_blocks_a_login_verified_against_old_credentials() {
+    let server = server();
+    server
+        .conn()
+        .unwrap()
+        .execute(
+            "INSERT INTO users VALUES('a','alex@example.test','new-password-hash','recovery')",
+            [],
+        )
+        .unwrap();
+    assert!(sign_in(&server, "a", Value::Null, "old-password-hash").is_err());
+    assert_eq!(
+        server
+            .conn()
+            .unwrap()
+            .query_row("SELECT count(*) FROM sessions", [], |r| r.get::<_, u32>(0))
+            .unwrap(),
+        0
+    );
+    assert!(sign_in(&server, "a", Value::Null, "new-password-hash").is_ok());
+}

@@ -600,6 +600,9 @@ function App() {
     return () => window.removeEventListener("hashchange", changed);
   }, []);
   useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [view]);
+  useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(""), 4000);
     return () => clearTimeout(t);

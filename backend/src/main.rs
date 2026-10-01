@@ -159,10 +159,22 @@ fn actor(server: &Server, headers: &HeaderMap) -> Result<String> {
         .optional()?
         .ok_or_else(ApiError::unauthorized)
 }
-fn sign_in(server: &Server, person: &str, recovery: Value) -> Result<(HeaderMap, Json<Value>)> {
+fn sign_in(
+    server: &Server,
+    person: &str,
+    recovery: Value,
+    expected_password: &str,
+) -> Result<(HeaderMap, Json<Value>)> {
     let raw = token();
     let now = Utc::now().timestamp();
     let db = server.conn()?;
+    let current: String =
+        db.query_row("SELECT password FROM users WHERE id=?1", [person], |r| {
+            r.get(0)
+        })?;
+    if current != expected_password {
+        return Err(ApiError::unauthorized());
+    }
     db.execute("DELETE FROM sessions WHERE expires<=?1", [now])?;
     db.execute(
         "INSERT INTO sessions VALUES(?1,?2,?3)",
@@ -275,7 +287,7 @@ async fn setup(
         )?;
         tx.commit()?;
     }
-    sign_in(&server, "a", json!(recoveries))
+    sign_in(&server, "a", json!(recoveries), &hashes[0])
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -300,13 +312,13 @@ async fn login(
         .optional()?;
     // Always perform an Argon2 verification so nonexistent accounts do not have a cheap timing path.
     let (id,hashed)=user.unwrap_or_else(||("".into(),"$argon2id$v=19$m=19456,t=2,p=1$c2FsdHNhbHRzYWx0c2FsdA$11QdSE2dBvxz6PbjWGqmVsJN+QMaoETdqha3HV4ht7U".into()));
-    if !verify(input.password, hashed).await? || id.is_empty() {
+    if !verify(input.password, hashed.clone()).await? || id.is_empty() {
         return Err(ApiError(
             StatusCode::UNAUTHORIZED,
             "Email or password did not match.".into(),
         ));
     }
-    sign_in(&server, &id, Value::Null)
+    sign_in(&server, &id, Value::Null, &hashed)
 }
 async fn logout(
     State(server): State<Server>,
@@ -372,7 +384,7 @@ async fn recover(
         tx.execute("DELETE FROM sessions WHERE person=?1", [&id])?;
         tx.commit()?;
     }
-    sign_in(&server, &id, json!({"person":id,"code":code}))
+    sign_in(&server, &id, json!({"person":id,"code":code}), &hashed)
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -411,7 +423,7 @@ async fn change_password(
         tx.execute("DELETE FROM sessions WHERE person=?1", [&id])?;
         tx.commit()?;
     }
-    sign_in(&server, &id, json!({"person":id,"code":code}))
+    sign_in(&server, &id, json!({"person":id,"code":code}), &hashed)
 }
 fn snapshot(server: &Server, person: String) -> Result<Value> {
     let db = server.conn()?;

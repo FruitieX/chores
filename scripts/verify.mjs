@@ -130,7 +130,14 @@ try {
     fullPage: true,
   });
   // Historical credits must survive point edits and archiving.
-  await p.goto(`${origin}/#settings`);
+  await p.evaluate(() => window.scrollTo(0, 500));
+  await p
+    .getByRole("navigation", { name: "Main navigation", exact: true })
+    .getByRole("link", { name: "Settings", exact: true })
+    .click();
+  await eventually(async () =>
+    assert.equal(await p.evaluate(() => scrollY), 0),
+  );
   await p.getByRole("button", { name: /Run dishwasher.*2 pts/ }).click();
   await p.getByRole("dialog").getByLabel("Points", { exact: true }).fill("7");
   await p

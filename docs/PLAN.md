@@ -63,8 +63,8 @@ The user authorized building, publishing to a private repository, and deploying 
 ### Publish and deployment
 
 - [x] Write README and operational deployment/recovery instructions.
-- [ ] Create private FruitieX/chores repository, commit with Conventional Commits and push tested changes.
-- [ ] Add CI validation and private GHCR image publication.
+- [x] Create private FruitieX/chores repository, commit with Conventional Commits and push tested changes.
+- [x] Add CI validation and private GHCR image publication.
 - [ ] Add Chores homelab Flux manifests with private ingress, persistent NFS storage and pinned image.
 - [ ] Commit/push only task-related homelab changes; preserve unrelated work, including the existing ForkBasket README edit.
 - [ ] Verify Flux health, ready replica, persistent volume, private HTTPS and lack of public ingress exposure.
@@ -75,4 +75,4 @@ The user authorized building, publishing to a private repository, and deploying 
 
 The app implementation passes Rust tests, Clippy, frontend type checking/build, and production browser checks with two separate accounts at 360, 390, 768 and 1440 px. Browser flows cover first-launch setup, independent contributions, historical point values, archiving, undo, paired bedtime swaps and unique bedtime completion, backup/restore, configurable balance, PWA assets, and connection recovery. A lost-response simulation confirms retrying a committed completion awards points only once. Real mobile/desktop chore and calendar screenshots have been inspected. The Nix container builds and passes non-root/read-only runtime, restart/session/data persistence, idempotency, private online backup and complete backup restoration checks. Expected-value guards additionally protect editors that remain open while the partner updates configuration.
 
-Private FruitieX/chores has been created; source push and CI/private GHCR publication are next. Deployment templates use only the private gateway and allow existing ExternalDNS to point the hostname at its LAN address. Final source/container checks will be repeated for the small focus-restoration and regression-test additions before publishing.
+Private FruitieX/chores has been created and the tested source pushed. CI/private GHCR publication is running. Ten Rust tests now also include password-rotation protection for a login still verifying old credentials. The production browser suite passes the final revision, including navigation scroll reset. The final container is being rebuilt for that revision; homelab manifests are prepared locally with a private route, NFS storage and no production accounts, awaiting the published immutable digest.
