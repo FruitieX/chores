@@ -1,0 +1,30 @@
+{
+  "name": "chores",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build && node scripts/build-pwa.mjs",
+    "typecheck": "tsc --noEmit",
+    "test:ui": "node scripts/verify.mjs",
+    "format": "prettier --write src scripts docs README.md package.json vite.config.ts tsconfig.json .github",
+    "format:check": "prettier --check src scripts docs README.md package.json vite.config.ts tsconfig.json .github"
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.23",
+    "lucide-react": "^1.49.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "playwright": "^1.63.0",
+    "prettier": "^3.9.9",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1"
+  }
+}

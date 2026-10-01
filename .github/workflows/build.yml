@@ -1,0 +1,46 @@
+name: Validate and publish
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: chores-build-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - run: nix develop --command npm ci
+      - run: nix develop --command cargo fmt --manifest-path backend/Cargo.toml -- --check
+      - run: nix develop --command cargo clippy --manifest-path backend/Cargo.toml -- -D warnings
+      - run: nix develop --command cargo test --manifest-path backend/Cargo.toml
+      - run: nix develop --command cargo build --manifest-path backend/Cargo.toml
+      - run: nix develop --command npm run typecheck
+      - run: nix develop --command npm run format:check
+      - run: nix develop --command npm run build
+      - run: nix develop --command npm run test:ui
+      - run: nix build .#container
+      - name: Check container
+        run: |
+          docker load -i result
+          nix develop --command node scripts/verify-container.mjs
+      - name: Publish private image
+        if: github.event_name != 'pull_request'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag ghcr.io/fruitiex/chores:main ghcr.io/fruitiex/chores:${{ github.sha }}
+          docker push ghcr.io/fruitiex/chores:main
+          docker push ghcr.io/fruitiex/chores:${{ github.sha }}
