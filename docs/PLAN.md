@@ -65,14 +65,25 @@ The user authorized building, publishing to a private repository, and deploying 
 - [x] Write README and operational deployment/recovery instructions.
 - [x] Create private FruitieX/chores repository, commit with Conventional Commits and push tested changes.
 - [x] Add CI validation and private GHCR image publication.
-- [ ] Add Chores homelab Flux manifests with private ingress, persistent NFS storage and pinned image.
-- [ ] Commit/push only task-related homelab changes; preserve unrelated work, including the existing ForkBasket README edit.
-- [ ] Verify Flux health, ready replica, persistent volume, private HTTPS and lack of public ingress exposure.
-- [ ] Confirm the live app is uninitialized and ready for the user's first-time setup.
-- [ ] Report live app and private repo links and any practical limitations; mark the active goal complete only after all required work is done.
+- [x] Add Chores homelab Flux manifests with private ingress, persistent NFS storage and pinned image.
+- [x] Commit/push only task-related homelab changes; preserve unrelated work, including the existing ForkBasket README edit.
+- [x] Verify Flux health, ready replica, persistent volume, private HTTPS and lack of public ingress exposure.
+- [x] Confirm the live app is uninitialized and ready for the user's first-time setup.
+- [x] Report live app and private repo links and any practical limitations; mark the active goal complete only after all required work is done.
 
-## Current progress
+## Completion record — 2026-10-01
 
-The app implementation passes Rust tests, Clippy, frontend type checking/build, and production browser checks with two separate accounts at 360, 390, 768 and 1440 px. Browser flows cover first-launch setup, independent contributions, historical point values, archiving, undo, paired bedtime swaps and unique bedtime completion, backup/restore, configurable balance, PWA assets, and connection recovery. A lost-response simulation confirms retrying a committed completion awards points only once. Real mobile/desktop chore and calendar screenshots have been inspected. The Nix container builds and passes non-root/read-only runtime, restart/session/data persistence, idempotency, private online backup and complete backup restoration checks. Expected-value guards additionally protect editors that remain open while the partner updates configuration.
+Implementation, verification, source publication and homelab deployment are complete.
 
-Private FruitieX/chores has been created and the tested source pushed. CI/private GHCR publication is running. Ten Rust tests now also include password-rotation protection for a login still verifying old credentials. The production browser suite passes the final revision, including navigation scroll reset. The final container is being rebuilt for that revision; homelab manifests are prepared locally with a private route, NFS storage and no production accounts, awaiting the published immutable digest.
+- Private source repository: [FruitieX/chores](https://github.com/FruitieX/chores).
+- Tested application revision: `ce6e187961869a1b320c7692377e1d9d79cf8dc8`.
+- Successful CI: [run 36919334442](https://github.com/FruitieX/chores/actions/runs/36919334442), including all 10 Rust tests, formatting, Clippy, frontend type checking/build, two-account production browser checks and Nix container/runtime checks.
+- Published private image digest: `sha256:5a19a186ac7da47e846b151f441c62b39a6dcbacdca9573fbd5b02a0b37f1083`. Anonymous registry access is denied.
+- Homelab deployment commit: `ea05c36b0df4d57ed07c478a1e0eeb00001a5dea`.
+- Flux Chores Kustomization is Ready at that revision; deployment has one ready replica and the 5 GiB `chores-data-nfs` claim is Bound.
+- DNS resolves `chores.fruitiex.org` to private gateway `192.168.11.99`. HTTPS readiness returns 200 there. The public gateway returns 404. HTTPRoute attaches only to `private`, with Accepted and ResolvedRefs true.
+- Database permissions are 0600, owned by UID/GID 10001. Local and CI container tests verified read-only/non-root runtime, idempotent writes, persistence across restart, private online backups and full database restoration.
+- A production browser check verified the actual first-launch screen, active service worker, zero page errors and zero Chromium installability errors using a disposable persistent profile. It made zero POST requests. Production remains uninitialized, ready for the user's setup.
+- Real mobile and desktop screenshots from isolated households are in ignored `test-results/`; the read-only production first-launch capture is `test-results/live-first-launch.png`.
+
+No AI integration, offline completion queue or external account recovery service is included. Recording requires LAN/VPN connectivity. Names, accounts and the bedtime starting pattern are entered in first launch without a setup token. Household days use Europe/Helsinki time. Subsequent CI runs publish images; deployment upgrades are applied through pinned homelab manifests.

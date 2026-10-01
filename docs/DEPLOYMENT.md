@@ -50,3 +50,9 @@ Before upgrades, take a database backup and pin the new image digest. Flux repla
 For full restoration, suspend the Chores Flux Kustomization, scale its deployment to zero, restore `chores.sqlite3` from a consistent backup with owner UID/GID 10001, and remove obsolete WAL/SHM files while the app is stopped. Restart the deployment, check readiness and both logins, then resume Flux. Never replace the database under a running server.
 
 A user who loses both password and recovery code can restore a known full database backup. There is no remote account recovery service. Do not delete the live volume to reset a household unless loss of all its data is explicitly intended.
+
+## Verified deployment — 2026-10-01
+
+[CI run 36919334442](https://github.com/FruitieX/chores/actions/runs/36919334442) passed for application revision `ce6e187961869a1b320c7692377e1d9d79cf8dc8`. Homelab commit `ea05c36` deploys its private image digest `sha256:5a19a186ac7da47e846b151f441c62b39a6dcbacdca9573fbd5b02a0b37f1083`. Flux reports Ready with one ready replica and a bound 5 GiB NFS volume.
+
+DNS resolves the app to `192.168.11.99`; private HTTPS readiness passes, and the public gateway returns 404. A read-only production browser check confirms first-launch setup, an active service worker and zero Chromium installability errors. No production household was created. Household dates and the rolling balance use Europe/Helsinki time.
