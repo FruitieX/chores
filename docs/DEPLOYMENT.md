@@ -64,3 +64,9 @@ DNS resolves the app to `192.168.11.99`; private HTTPS readiness passes, and the
 Full backups were taken before and after the schema 2 migration. Private comparisons verified unchanged accounts, sessions, settings and completion snapshots, and preserved existing paired swaps. Operational backups are outside Git in `/home/rasse/.local/share/chores/backups/`, with mode 0600.
 
 Live browser verification loaded the new assets over private HTTPS, confirmed readiness, unauthenticated API protection and the service worker, and found no page errors or mobile overflow. It made no writes. The public gateway returns 404; anonymous GHCR access returns 401. Bedtime is now schedule-only, with direct calendar swaps, undo and date-specific restarts.
+
+## Verified visual refresh — 2026-10-02
+
+[CI run 36975831493](https://github.com/FruitieX/chores/actions/runs/36975831493) passed for runtime revision `e260d06af498b8ee14e968cb0f9aa2cdfb02c7be`. Homelab commit `0d13dd0` pins digest `sha256:f11980a0c29d5d3aa5e8e3163ff53ae36ab0981981298ffbc11766b3b298c8b2`. Flux is Ready/Healthy with one ready replica and the existing Bound NFS claim.
+
+A private full database backup was verified before rollout. This frontend update keeps schema 2. Live browser checks confirm the new blue and amber assets, bold headings, SVG and PNG app icons, theme colors, service worker and mobile layout without page errors or writes. Private readiness returns 200, the public gateway 404, and anonymous registry access 401. Close and reopen app windows to activate the updated static cache.

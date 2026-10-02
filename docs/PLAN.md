@@ -122,4 +122,12 @@ The user requested a distinct look and feel so Chores is recognizable among thei
 - [x] Make completed-chore recording clearer with checkmark affordances and responsive card feedback; keep the existing flows and data rules.
 - [x] Verify Rust/frontend checks, production browser flows, mobile/desktop screenshots and the production container.
   - All 17 Rust tests, formatting and Clippy pass; frontend type checking, formatting and production build pass. Two-account browser flows pass at 360, 390, 768 and 1440 px. Home, calendar, settings and dialog screenshots were inspected. Container persistence, idempotency and private backup/restore checks pass.
-- [ ] Push the private source, pass CI, deploy a pinned image and verify private HTTPS.
+- [x] Push the private source, pass CI, deploy a pinned image and verify private HTTPS.
+
+The visual refresh is deployed and verified:
+
+- Runtime revision: `e260d06af498b8ee14e968cb0f9aa2cdfb02c7be`; [CI run 36975831493](https://github.com/FruitieX/chores/actions/runs/36975831493) passed all checks and private publication.
+- Image digest: `sha256:f11980a0c29d5d3aa5e8e3163ff53ae36ab0981981298ffbc11766b3b298c8b2`; homelab commit `0d13dd0d314b16c3abe0c47d55b528ef76fd904c`. Flux is Ready/Healthy, with one ready replica and the existing Bound claim.
+- A private full database backup passed integrity checks before rollout. This frontend refresh keeps schema 2 and requires no data migration.
+- Live browser checks verified the new asset revision, bold headings, theme colors and exact SVG/PNG icon contents, an active service worker, mobile layout, no page errors and zero writes. Screenshots are under ignored `test-results/`.
+- Private HTTPS readiness returns 200, public gateway 404 and anonymous GHCR access 401. The route remains private, Accepted and ResolvedRefs true.
