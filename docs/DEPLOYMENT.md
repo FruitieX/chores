@@ -6,7 +6,7 @@ Chores uses a private GitHub repository and GHCR image, a homelab Flux deploymen
 
 Open the private HTTPS address while on LAN/VPN. Enter your household name, the two names, a separate email and password for each account, and a known bedtime date and assignee. First launch needs no setup token. Setup creates both accounts atomically and becomes unavailable afterward. Save both recovery codes separately in your password managers. The first adult is signed in automatically; the other can sign in on their own device immediately.
 
-Emails are login identifiers; Chores does not send email. Forgotten passwords use the account's saved recovery code. Password recovery and changes replace the recovery code and sign out that person's existing sessions. Each account can record and undo its own chores; either adult can change shared chore/settings values and exchange bedtime nights. The first account can restore the household backup.
+Emails are login identifiers; Chores does not send email. Forgotten passwords use the account's saved recovery code. Password recovery and changes replace the recovery code and sign out that person's existing sessions. Each account can record and undo its own chores; either adult can change shared chore/settings values and exchange or undo bedtime swaps and restart alternation from a chosen day. The first account can restore the household backup.
 
 ## Build and publication
 
@@ -32,7 +32,7 @@ KUBECONFIG=~/homelab/kubeconfig nix develop --command kubectl rollout status dep
 
 ## Backups
 
-Settings downloads household JSON containing chores, historical credits and bedtime swaps, excluding account credentials. Restore is available to the first adult, requires confirmation and checks the current revision. The import validates the full paired swap history and the resulting assignments. Download a current backup before replacing shared data.
+Settings downloads household JSON containing chores, historical credits and bedtime swaps, excluding account credentials. Restore is available to the first adult, requires confirmation and checks the current revision. Version 2 imports replay paired swaps, undo actions and dated pattern changes to validate the resulting assignments; version 1 imports migrate automatically. Legacy bedtime completion values remain in history and are excluded from chore totals. Download a current backup before replacing shared data.
 
 For a complete backup including accounts and sessions, use the SQLite online backup command. Choose a new filename; the command refuses to overwrite an existing file.
 
@@ -45,7 +45,7 @@ Keep backups outside the PVC and verify restoration periodically. A live SQLite 
 
 ## Recovery and upgrades
 
-Before upgrades, take a database backup and pin the new image digest. Flux replaces the single pod; application schema checks refuse newer database formats on older binaries. Close and reopen installed app windows after upgrading so the new service worker can activate.
+Before upgrades, take a database backup and pin the new image digest. The bedtime calendar update migrates SQLite from schema 1 to schema 2 transactionally; rolling back to the original release requires restoring a schema 1 database backup. Flux replaces the single pod; application schema checks refuse newer database formats on older binaries. Close and reopen installed app windows after upgrading so the new service worker can activate.
 
 For full restoration, suspend the Chores Flux Kustomization, scale its deployment to zero, restore `chores.sqlite3` from a consistent backup with owner UID/GID 10001, and remove obsolete WAL/SHM files while the app is stopped. Restart the deployment, check readiness and both logins, then resume Flux. Never replace the database under a running server.
 

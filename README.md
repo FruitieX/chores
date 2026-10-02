@@ -7,7 +7,7 @@ Live at **https://chores.fruitiex.org** through the homelab's private HTTPS gate
 - Configurable chores, points, categories, icons and optional maintenance intervals.
 - A rolling last-30-days balance, adjustable to other periods or all time.
 - Historical point values, completion notes and dates, and undo with a preserved history entry.
-- An alternating bedtime calendar and atomic paired swaps that preserve total turns. Bedtime earns points only when explicitly recorded, once per night.
+- An alternating bedtime calendar and atomic paired swaps that preserve total turns. Tap two calendar nights to swap them, or undo a swap. Start a new alternating pattern from a chosen date while preserving earlier nights. Bedtime has no chore points or recording step.
 - Separate secure cookie logins, account recovery, shared updates, backups, and an installable app shell.
 
 Recording needs connectivity. Household updates appear within five seconds or on window focus. If a response is lost, **Retry change** checks the same request without double counting; unresolved requests survive a reload in that browser tab. The PWA caches its static shell, rather than private household data. HTTPS on Android supports **Add to home screen → Install**.

@@ -631,9 +631,13 @@ function App() {
           ? "Chore recorded"
           : request.operation.type === "swap"
             ? "Bedtime nights swapped"
-            : request.operation.type === "undo"
-              ? "Completion removed"
-              : "Changes saved",
+            : request.operation.type === "undoSwap"
+              ? "Swap undone"
+              : request.operation.type === "restartBedtime"
+                ? "Bedtime pattern updated"
+                : request.operation.type === "undo"
+                  ? "Completion removed"
+                  : "Changes saved",
       );
       return true;
     } catch (e) {
@@ -879,7 +883,11 @@ function Balance({ h, today }: { h: Household; today: string }) {
     ? addDays(today, 1 - h.settings.balanceDays)
     : "0000";
   const entries = h.completions.filter(
-    (c) => !c.undone && c.date >= start && c.date <= today,
+    (c) =>
+      c.choreId !== "bedtime" &&
+      !c.undone &&
+      c.date >= start &&
+      c.date <= today,
   );
   const totals = ["a", "b"].map((p) =>
     entries.filter((c) => c.person === p).reduce((sum, c) => sum + c.points, 0),
@@ -936,7 +944,7 @@ function Balance({ h, today }: { h: Household; today: string }) {
           <p>
             Points compare completed work in this rolling window. Values are set
             by you both, and each completion keeps the value it had when
-            recorded. Bedtime nights are tracked separately too.
+            recorded. Bedtime turns are separate from chore points.
           </p>
         </details>
       </div>
@@ -947,9 +955,6 @@ function Home({ h, person, today, mutate, disabled }: Shared) {
   const [selected, setSelected] = useState<Chore | null>(null);
   const [category, setCategory] = useState("All chores");
   const onDuty = assignee(h, today);
-  const bedtime = h.completions.find(
-    (c) => c.choreId === "bedtime" && c.date === today && !c.undone,
-  );
   const tasks = h.chores.filter(
     (c) =>
       !c.archived &&
@@ -976,39 +981,21 @@ function Home({ h, person, today, mutate, disabled }: Shared) {
             <Moon size={21} />
           </div>
           <h2>
-            {bedtime
-              ? "Sweet dreams."
-              : onDuty
-                ? `${personName(h, onDuty)}’s turn`
-                : "Set your starting night"}
+            {onDuty
+              ? `${personName(h, onDuty)}’s turn`
+              : "Set your starting night"}
           </h2>
           <p>
-            {bedtime
-              ? `Recorded by ${personName(h, bedtime.person)} · ${bedtime.points} pts`
-              : onDuty === person
-                ? "A little story, a little patience. Your night."
-                : onDuty
-                  ? "Your night off. Tomorrow brings another turn."
-                  : "The calendar begins on " +
-                    formatDate(h.settings.bedtimeStart) +
-                    "."}
+            {onDuty === person
+              ? "A little story, a little patience. Your night."
+              : onDuty
+                ? "Your night off. Tomorrow brings another turn."
+                : "Choose a starting date in the calendar."}
           </p>
           <div className="bedtime-actions">
-            {!bedtime && onDuty === person && (
-              <button
-                className="primary"
-                disabled={disabled}
-                onClick={() =>
-                  setSelected(h.chores.find((c) => c.id === "bedtime")!)
-                }
-              >
-                <Check size={17} />
-                Record bedtime
-              </button>
-            )}
             <a href="#calendar" className="text-button">
               <CalendarDays size={17} />
-              {bedtime ? "View calendar" : "Calendar & swaps"}
+              Calendar & swaps
             </a>
           </div>
         </section>
@@ -1107,12 +1094,6 @@ function RecordChore({
 }: Shared & { chore: Chore; onClose: () => void }) {
   const [date, setDate] = useState(today);
   const [note, setNote] = useState("");
-  const match = chore.id !== "bedtime" || assignee(h, date) === person;
-  const already =
-    chore.id === "bedtime" &&
-    h.completions.some(
-      (c) => c.choreId === "bedtime" && c.date === date && !c.undone,
-    );
   return (
     <Modal
       title={chore.name}
@@ -1153,19 +1134,11 @@ function RecordChore({
             onChange={(e) => setNote(e.target.value)}
           />
         </Field>
-        {!match && (
-          <p className="error">
-            This is your partner’s turn. Swap nights in the calendar first.
-          </p>
-        )}
-        {already && (
-          <p className="error">Bedtime is already recorded for this date.</p>
-        )}
         <div className="actions">
           <button type="button" className="secondary" onClick={onClose}>
             Cancel
           </button>
-          <button className="primary" disabled={disabled || !match || already}>
+          <button className="primary" disabled={disabled}>
             <Check size={17} />
             Record {chore.points} pts
           </button>
@@ -1174,10 +1147,12 @@ function RecordChore({
     </Modal>
   );
 }
-function Calendar({ h, person, today, mutate, disabled }: Shared) {
+function Calendar({ h, today, mutate, disabled }: Shared) {
   const [month, setMonth] = useState(today.slice(0, 7));
-  const [swap, setSwap] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Chore | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [pair, setPair] = useState<[string, string] | null>(null);
+  const [restart, setRestart] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
   const first = `${month}-01`;
   const last = new Date(
     Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0),
@@ -1190,22 +1165,35 @@ function Calendar({ h, person, today, mutate, disabled }: Shared) {
   const counts = (["a", "b"] as Person[]).map(
     (p) => days.filter((d) => assignee(h, d) === p).length,
   );
-  const bedtime = h.chores.find((c) => c.id === "bedtime")!;
+  const selectedPerson = selected ? assignee(h, selected) : null;
+  const canSwap = !!selected && selected >= today && !!selectedPerson;
+  function pick(day: string) {
+    if (day === selected) setSelected(null);
+    else if (
+      canSwap &&
+      day >= today &&
+      assignee(h, day) &&
+      assignee(h, day) !== selectedPerson
+    )
+      setPair([selected!, day]);
+    else setSelected(day);
+  }
+  const swaps = [...h.swaps].reverse();
   return (
     <>
-      <div className="page-heading">
+      <div className="page-heading calendar-heading">
         <div>
           <span className="eyebrow">A turn for each of you</span>
           <h1>Bedtime, together.</h1>
-          <p>Every other night. Swap a pair when plans change.</p>
+          <p>Tap two nights to trade turns. No points to keep track of.</p>
         </div>
         <button
-          className="primary"
+          className="secondary"
           disabled={disabled}
-          onClick={() => setSwap(today)}
+          onClick={() => setRestart(selected ?? today)}
         >
-          <ArrowLeftRight size={18} />
-          Swap nights
+          <CalendarDays size={18} />
+          New starting date
         </button>
       </div>
       <section className="calendar-panel">
@@ -1247,6 +1235,46 @@ function Calendar({ h, person, today, mutate, disabled }: Shared) {
             </span>
           ))}
         </div>
+        <div className="night-selection" role="status">
+          {selected ? (
+            <>
+              <div>
+                <strong>
+                  {formatDate(selected)}
+                  {selectedPerson
+                    ? ` · ${personName(h, selectedPerson)}’s turn`
+                    : " · Before schedule"}
+                </strong>
+                <p>
+                  {canSwap
+                    ? `Now choose a ${personName(h, selectedPerson === "a" ? "b" : "a")} night to exchange. You can move to another month.`
+                    : "You can start a new alternating pattern from this day."}
+                </p>
+              </div>
+              <div className="selection-actions">
+                <button
+                  className="text-button"
+                  disabled={disabled}
+                  onClick={() => setRestart(selected)}
+                >
+                  Start pattern here
+                </button>
+                <button
+                  className="icon-button"
+                  aria-label="Clear selected night"
+                  onClick={() => setSelected(null)}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </>
+          ) : (
+            <p>
+              <ArrowLeftRight size={18} />
+              Choose an upcoming night, then one belonging to the other person.
+            </p>
+          )}
+        </div>
         <div className="calendar-grid">
           {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
             <span className="weekday" key={d}>
@@ -1258,24 +1286,21 @@ function Calendar({ h, person, today, mutate, disabled }: Shared) {
           ))}
           {days.map((d) => {
             const who = assignee(h, d);
-            const done = h.completions.find(
-              (c) => c.choreId === "bedtime" && c.date === d && !c.undone,
-            );
+            const eligible =
+              canSwap && d >= today && who && who !== selectedPerson;
             return (
               <button
                 key={d}
-                className={`calendar-day ${who ?? "none"} ${d === today ? "today" : ""} ${d < today ? "past" : ""}`}
-                aria-label={`${formatDate(d)}: ${who ? personName(h, who) : "Before schedule"}${h.overrides[d] ? ", swapped" : ""}${done ? ", completed" : ""}`}
-                disabled={!who || d < today || !!done || disabled}
-                onClick={() => setSwap(d)}
+                data-date={d}
+                className={`calendar-day ${who ?? "none"} ${d === today ? "today" : ""} ${d < today ? "past" : ""} ${d === selected ? "picked" : ""} ${eligible ? "swap-eligible" : ""}`}
+                aria-label={`${formatDate(d)}: ${who ? personName(h, who) : "Before schedule"}${h.overrides[d] ? ", swapped" : ""}`}
+                aria-pressed={d === selected}
+                disabled={disabled}
+                onClick={() => pick(d)}
               >
                 <span>
                   {Number(d.slice(8))}
-                  {done ? (
-                    <Check size={15} />
-                  ) : h.overrides[d] ? (
-                    <ArrowLeftRight size={13} />
-                  ) : null}
+                  {h.overrides[d] && <ArrowLeftRight size={13} />}
                 </span>
                 <strong>{who ? personName(h, who) : "—"}</strong>
                 {d === today && <small>Today</small>}
@@ -1284,69 +1309,87 @@ function Calendar({ h, person, today, mutate, disabled }: Shared) {
           })}
         </div>
         <p className="hint calendar-hint">
-          Tap an upcoming night to swap it. A pair of exchanged nights preserves
-          your total turns; monthly counts can differ if a swap crosses months.
+          Both nights change together, keeping your total turns equal. Monthly
+          counts can differ when a swap crosses months.
         </p>
       </section>
-      <div className="calendar-foot">
-        <div className="info">
-          <Moon size={21} />
-          <p>
-            Bedtime points count when you record the completed night. The
-            calendar keeps track of whose turn it is.
-          </p>
-        </div>
-        {assignee(h, today) === person &&
-          !h.completions.some(
-            (c) => c.choreId === "bedtime" && c.date === today && !c.undone,
-          ) && (
-            <button
-              className="primary"
-              disabled={disabled}
-              onClick={() => setSelected(bedtime)}
-            >
-              Record tonight’s bedtime
-            </button>
-          )}
-      </div>
-      {h.swaps.length > 0 && (
+      {h.bedtimeStarts.length > 1 && (
+        <p className="hint pattern-current">
+          Latest starting pattern:{" "}
+          {personName(h, h.bedtimeStarts.at(-1)!.person)} starts on{" "}
+          {formatDate(h.bedtimeStarts.at(-1)!.date)}. Earlier nights keep their
+          previous pattern.
+        </p>
+      )}
+      {swaps.length > 0 && (
         <section className="recent-swaps">
           <h2>Recent swaps</h2>
-          {h.swaps
-            .slice(-5)
-            .reverse()
-            .map((s) => (
-              <div className="swap-row" key={s.id}>
-                <ArrowLeftRight size={18} />
-                <p>
-                  {formatDate(s.first, true)} <span>↔</span>{" "}
-                  {formatDate(s.second, true)}
-                  <small>Swapped by {personName(h, s.actor)}</small>
-                </p>
-              </div>
-            ))}
+          {(showAll ? swaps : swaps.slice(0, 5)).map((s) => (
+            <div className={`swap-row ${s.undone ? "undone" : ""}`} key={s.id}>
+              <ArrowLeftRight size={18} />
+              <p>
+                {formatDate(s.first, true)} <span>↔</span>{" "}
+                {formatDate(s.second, true)}
+                <small>
+                  {s.undone
+                    ? "Undone"
+                    : s.superseded
+                      ? "Replaced by a new pattern"
+                      : `Swapped by ${personName(h, s.actor)}`}
+                </small>
+                {!s.undone && !s.superseded && s.undoBlocked && (
+                  <small>{s.undoBlocked}</small>
+                )}
+              </p>
+              {!s.undoBlocked && (
+                <button
+                  className="secondary"
+                  disabled={disabled}
+                  aria-label={`Undo swap ${s.first} and ${s.second}`}
+                  onClick={async () => {
+                    if (await mutate({ type: "undoSwap", id: s.id }))
+                      setSelected(null);
+                  }}
+                >
+                  <RotateCcw size={16} />
+                  Undo
+                </button>
+              )}
+            </div>
+          ))}
+          {!showAll && swaps.length > 5 && (
+            <button className="text-button" onClick={() => setShowAll(true)}>
+              Show all swaps
+            </button>
+          )}
         </section>
       )}
-      {swap && (
+      {pair && (
         <SwapNights
           h={h}
-          person={person}
           today={today}
-          first={swap}
+          first={pair[0]}
+          second={pair[1]}
           mutate={mutate}
           disabled={disabled}
-          onClose={() => setSwap(null)}
+          onClose={() => setPair(null)}
+          onDone={() => {
+            setPair(null);
+            setSelected(null);
+          }}
         />
-      )}{" "}
-      {selected && (
-        <RecordChore
-          chore={selected}
+      )}
+      {restart && (
+        <RestartBedtime
           h={h}
-          person={person}
-          today={today}
+          initial={restart}
           mutate={mutate}
           disabled={disabled}
-          onClose={() => setSelected(null)}
+          onClose={() => setRestart(null)}
+          onDone={() => {
+            setRestart(null);
+            setSelected(null);
+          }}
         />
       )}
     </>
@@ -1355,92 +1398,145 @@ function Calendar({ h, person, today, mutate, disabled }: Shared) {
 function SwapNights({
   h,
   today,
-  first: initial,
+  first,
+  second,
   mutate,
   disabled,
   onClose,
-}: Shared & { first: string; onClose: () => void }) {
-  const [first, setFirst] = useState(initial);
-  const [second, setSecond] = useState("");
-  const a = assignee(h, first);
-  const b = second ? assignee(h, second) : null;
-  const completed = (d: string) =>
-    h.completions.some(
-      (c) => c.choreId === "bedtime" && c.date === d && !c.undone,
-    );
-  const valid =
-    first >= today &&
-    second >= today &&
-    a &&
-    b &&
-    a !== b &&
-    !completed(first) &&
-    !completed(second);
+  onDone,
+}: Omit<Shared, "person"> & {
+  first: string;
+  second: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const a = assignee(h, first),
+    b = assignee(h, second);
+  const valid = first >= today && second >= today && a && b && a !== b;
   return (
     <Modal
-      title="Swap two bedtime nights"
-      description="Pick one night from each person. Both dates change together."
+      title="Swap these nights?"
+      description="Both turns change together. You can undo the swap in the calendar."
+      onClose={onClose}
+    >
+      {valid ? (
+        <div className="swap-preview">
+          <p>
+            <strong>{formatDate(first, true)}</strong>
+            <span>{personName(h, b)} takes over</span>
+          </p>
+          <ArrowLeftRight size={21} />
+          <p>
+            <strong>{formatDate(second, true)}</strong>
+            <span>{personName(h, a)} takes over</span>
+          </p>
+        </div>
+      ) : (
+        <p className="error">
+          The calendar has changed. Choose a new pair of nights.
+        </p>
+      )}
+      <div className="actions">
+        <button className="secondary" onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          className="primary"
+          disabled={disabled || !valid}
+          onClick={async () => {
+            if (await mutate({ type: "swap", first, second })) onDone();
+          }}
+        >
+          Swap both nights
+        </button>
+      </div>
+    </Modal>
+  );
+}
+function RestartBedtime({
+  h,
+  initial,
+  mutate,
+  disabled,
+  onClose,
+  onDone,
+}: Pick<Shared, "h" | "mutate" | "disabled"> & {
+  initial: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [date, setDate] = useState(initial);
+  const [firstPerson, setFirstPerson] = useState<Person>(
+    assignee(h, initial) ?? "a",
+  );
+  const affected = h.swaps.filter(
+    (s) => !s.undone && !s.superseded && (s.first >= date || s.second >= date),
+  ).length;
+  const later = h.bedtimeStarts.filter((s) => s.date >= date).length;
+  return (
+    <Modal
+      title="A new starting night"
+      description="Alternate daily from your chosen date. Earlier nights stay exactly as they are."
       onClose={onClose}
     >
       <form
         onSubmit={async (e) => {
           e.preventDefault();
-          if (await mutate({ type: "swap", first, second })) onClose();
+          if (await mutate({ type: "restartBedtime", date, firstPerson }))
+            onDone();
         }}
       >
-        <Field label="Night to change">
+        <Field label="Starting date">
           <input
-            type="date"
             required
-            min={today}
-            value={first}
-            onChange={(e) => setFirst(e.target.value)}
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
           />
         </Field>
-        {a && <p className="date-owner">Currently {personName(h, a)}’s turn</p>}
-        <Field label="Night to exchange">
-          <input
-            type="date"
-            required
-            min={today}
-            value={second}
-            onChange={(e) => setSecond(e.target.value)}
-          />
+        <Field label="First night belongs to">
+          <select
+            value={firstPerson}
+            onChange={(e) => setFirstPerson(e.target.value as Person)}
+          >
+            <option value="a">{h.settings.names[0]}</option>
+            <option value="b">{h.settings.names[1]}</option>
+          </select>
         </Field>
-        {second && b && (
-          <p className="date-owner">Currently {personName(h, b)}’s turn</p>
-        )}
-        {second && !valid && (
-          <p className="error">
-            Choose two uncompleted nights with different people, today or later.
-          </p>
-        )}
-        {valid && (
-          <div className="swap-preview">
-            <p>
-              <strong>{formatDate(first, true)}</strong>
-              <span>{personName(h, b)} takes over</span>
-            </p>
-            <ArrowLeftRight size={21} />
-            <p>
-              <strong>{formatDate(second, true)}</strong>
-              <span>{personName(h, a)} takes over</span>
-            </p>
+        {date && (
+          <div className="pattern-preview" aria-label="New pattern preview">
+            {Array.from({ length: 4 }, (_, i) => (
+              <p key={i}>
+                <span>{formatDate(addDays(date, i), true)}</span>
+                <strong>
+                  {personName(
+                    h,
+                    i % 2 === 0 ? firstPerson : firstPerson === "a" ? "b" : "a",
+                  )}
+                </strong>
+              </p>
+            ))}
           </div>
         )}
+        <p className="hint">
+          Existing swaps and later pattern changes from this day are replaced.
+          Swapped nights before this date stay as they are.
+          {(affected > 0 || later > 0) &&
+            ` This replaces ${affected} active swap${affected === 1 ? "" : "s"} and ${later} starting pattern${later === 1 ? "" : "s"} at or after this date.`}
+        </p>
         <div className="actions">
           <button type="button" className="secondary" onClick={onClose}>
             Cancel
           </button>
-          <button className="primary" disabled={disabled || !valid}>
-            Swap both nights
+          <button className="primary" disabled={disabled || !date}>
+            Start new pattern
           </button>
         </div>
       </form>
     </Modal>
   );
 }
-function HistoryView({ h, person, today, mutate, disabled }: Shared) {
+function HistoryView({ h, person, mutate, disabled }: Shared) {
   const [filter, setFilter] = useState("all");
   const [limit, setLimit] = useState(50);
   const [remove, setRemove] = useState<string | null>(null);
@@ -1455,20 +1551,6 @@ function HistoryView({ h, person, today, mutate, disabled }: Shared) {
       (a, b) =>
         b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt),
     );
-  const start = h.settings.balanceDays
-    ? addDays(today, 1 - h.settings.balanceDays)
-    : "0000";
-  const nights = (["a", "b"] as Person[]).map(
-    (p) =>
-      h.completions.filter(
-        (c) =>
-          c.choreId === "bedtime" &&
-          c.person === p &&
-          !c.undone &&
-          c.date >= start &&
-          c.date <= today,
-      ).length,
-  );
   return (
     <>
       <div className="page-heading">
@@ -1476,23 +1558,6 @@ function HistoryView({ h, person, today, mutate, disabled }: Shared) {
           <span className="eyebrow">Every contribution counts</span>
           <h1>Our little victories.</h1>
           <p>A record of the work you’ve shared.</p>
-        </div>
-      </div>
-      <div className="history-summary">
-        <Moon size={24} />
-        <div>
-          <strong>Completed bedtime nights</strong>
-          <p>
-            {h.settings.names[0]}: {nights[0]} <span>·</span>{" "}
-            {h.settings.names[1]}: {nights[1]}{" "}
-            <small>
-              (
-              {h.settings.balanceDays
-                ? `last ${h.settings.balanceDays} days`
-                : "all time"}
-              )
-            </small>
-          </p>
         </div>
       </div>
       <div className="history-controls">
@@ -1543,11 +1608,15 @@ function HistoryView({ h, person, today, mutate, disabled }: Shared) {
               <span>
                 {personName(h, c.person)} · {formatDate(c.date, true)}
                 {c.undone ? " · Removed" : ""}
+                {c.choreId === "bedtime" &&
+                  " · Legacy bedtime, excluded from balance"}
               </span>
               {c.note && <p>{c.note}</p>}
             </div>
             <strong className="history-points">
-              {c.undone ? "—" : `+${c.points}`}
+              {c.undone
+                ? "—"
+                : `${c.choreId === "bedtime" ? "" : "+"}${c.points}`}
               <small>pts</small>
             </strong>
             {c.person === person && !c.undone && (
@@ -1571,7 +1640,11 @@ function HistoryView({ h, person, today, mutate, disabled }: Shared) {
       {remove && (
         <Modal
           title="Remove this completion?"
-          description="The points will be deducted. The original entry stays in history as removed."
+          description={
+            h.completions.find((c) => c.id === remove)?.choreId === "bedtime"
+              ? "This legacy record is already excluded from the balance. It stays in history as removed."
+              : "The points will be deducted. The original entry stays in history as removed."
+          }
           onClose={() => setRemove(null)}
         >
           <div className="actions">
@@ -1625,8 +1698,6 @@ function SettingsView({
     setSettings({ ...settings, ...patch });
     setDirty(true);
   };
-  const locked =
-    h.swaps.length > 0 || h.completions.some((c) => c.choreId === "bedtime");
   return (
     <>
       <div className="page-heading">
@@ -1691,37 +1762,10 @@ function SettingsView({
               </Field>
             ))}
           </div>
-          <details className="settings-disclosure">
-            <summary>Bedtime starting pattern</summary>
-            <p className="hint">
-              {locked
-                ? "The starting pattern is preserved after the first bedtime or swap. Use the calendar to exchange individual nights."
-                : "You can change the starting pattern until the first bedtime is recorded or swapped."}
-            </p>
-            <div className="form-grid">
-              <Field label="Starting date">
-                <input
-                  type="date"
-                  required
-                  disabled={locked}
-                  value={settings.bedtimeStart}
-                  onChange={(e) => update({ bedtimeStart: e.target.value })}
-                />
-              </Field>
-              <Field label="First night belongs to">
-                <select
-                  disabled={locked}
-                  value={settings.bedtimeFirst}
-                  onChange={(e) =>
-                    update({ bedtimeFirst: e.target.value as Person })
-                  }
-                >
-                  <option value="a">{settings.names[0]}</option>
-                  <option value="b">{settings.names[1]}</option>
-                </select>
-              </Field>
-            </div>
-          </details>
+          <p className="hint">
+            Change bedtime turns from a chosen day in the{" "}
+            <a href="#calendar">calendar</a>.
+          </p>
           <div className="actions">
             <button
               type="button"
@@ -1899,7 +1943,7 @@ function SettingsView({
                     if (file.size > 16 * 1024 * 1024)
                       throw new Error("Backup must be smaller than 16 MB.");
                     const data = JSON.parse(await file.text());
-                    if (data.version !== 1 || !data.household)
+                    if (![1, 2].includes(data.version) || !data.household)
                       throw new Error("Choose a Chores backup file.");
                     setRestoreData(data);
                   } catch (e) {
@@ -2018,16 +2062,10 @@ function EditChore({
           </Field>
           <Field label="Category">
             <select
-              disabled={chore.id === "bedtime"}
               value={chore.category}
               onChange={(e) => setChore({ ...chore, category: e.target.value })}
             >
-              {[
-                "Everyday",
-                "Laundry",
-                "Maintenance",
-                ...(chore.id === "bedtime" ? ["Bedtime"] : []),
-              ].map((c) => (
+              {["Everyday", "Laundry", "Maintenance"].map((c) => (
                 <option key={c}>{c}</option>
               ))}
             </select>
@@ -2060,38 +2098,34 @@ function EditChore({
             ))}
           </select>
         </Field>
-        {chore.id !== "bedtime" && (
-          <>
-            <Field label="Repeat interval in days (optional)">
-              <input
-                type="number"
-                min={1}
-                max={3650}
-                step={1}
-                placeholder="For example, 90 for HVAC filters"
-                value={chore.intervalDays ?? ""}
-                onChange={(e) =>
-                  setChore({
-                    ...chore,
-                    intervalDays: e.target.value
-                      ? Number(e.target.value)
-                      : null,
-                  })
-                }
-              />
-            </Field>
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={chore.archived}
-                onChange={(e) =>
-                  setChore({ ...chore, archived: e.target.checked })
-                }
-              />
-              Archive this chore
-            </label>
-          </>
-        )}
+        <>
+          <Field label="Repeat interval in days (optional)">
+            <input
+              type="number"
+              min={1}
+              max={3650}
+              step={1}
+              placeholder="For example, 90 for HVAC filters"
+              value={chore.intervalDays ?? ""}
+              onChange={(e) =>
+                setChore({
+                  ...chore,
+                  intervalDays: e.target.value ? Number(e.target.value) : null,
+                })
+              }
+            />
+          </Field>
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={chore.archived}
+              onChange={(e) =>
+                setChore({ ...chore, archived: e.target.checked })
+              }
+            />
+            Archive this chore
+          </label>
+        </>
         <div className="actions">
           <button className="secondary" type="button" onClick={onClose}>
             Cancel

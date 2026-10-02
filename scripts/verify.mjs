@@ -208,27 +208,56 @@ try {
     .getByRole("button", { name: "Remove completion" })
     .click();
   await p.getByRole("dialog").waitFor({ state: "hidden" });
-  // Pair swapping preserves total scheduled duties and propagates to another session.
+  // Tap-to-swap calendar, shared undo, and date-specific starting patterns.
+  const dayButton = (page, date) =>
+    page.locator(`.calendar-day[data-date="${date}"]`);
+  async function showDay(page, date) {
+    for (let i = 0; i < 24; i++) {
+      if (await dayButton(page, date).count()) return dayButton(page, date);
+      const visible = await page
+        .locator(".calendar-day")
+        .first()
+        .getAttribute("data-date");
+      await page
+        .getByRole("button", {
+          name: date < visible ? "Previous month" : "Next month",
+          exact: true,
+        })
+        .click();
+    }
+    throw new Error("Calendar date unavailable");
+  }
+  const pickDay = async (page, date) => (await showDay(page, date)).click();
   await p.goto(`${origin}/#calendar`);
-  await p.getByRole("button", { name: "Swap nights", exact: true }).click();
-  await p.getByRole("dialog").getByLabel("Night to change").fill(today);
+  assert.equal(
+    await p.getByRole("button", { name: /Record.*bedtime/ }).count(),
+    0,
+  );
+  await pickDay(p, today);
   await p
-    .getByRole("dialog")
-    .getByLabel("Night to exchange")
-    .fill(add(today, 1));
+    .locator(".night-selection")
+    .getByText(/Now choose a Sam night/)
+    .waitFor();
+  await p.screenshot({
+    path: "test-results/desktop-calendar-selection.png",
+    fullPage: true,
+  });
+  await pickDay(p, add(today, 1));
   await p
     .getByRole("dialog")
     .getByRole("button", { name: "Swap both nights" })
     .click();
   await p.getByRole("dialog").waitFor({ state: "hidden" });
   await q.goto(`${origin}/#calendar`);
-  await eventually(async () => {
-    assert.equal((await state(q)).household.overrides[today], "b");
-    assert.equal(
-      await q.getByRole("button", { name: "Record tonight’s bedtime" }).count(),
-      1,
-    );
-  });
+  await eventually(async () =>
+    assert.equal((await state(q)).household.overrides[today], "b"),
+  );
+  assert.equal(
+    await q.getByRole("button", { name: /Record.*bedtime/ }).count(),
+    0,
+  );
+  await dayButton(q, today).locator("svg").waitFor();
+  await q.getByRole("button", { name: /Undo swap/ }).waitFor();
   await p.screenshot({
     path: "test-results/desktop-calendar.png",
     fullPage: true,
@@ -237,17 +266,68 @@ try {
     path: "test-results/mobile-calendar.png",
     fullPage: true,
   });
-  await q.getByRole("button", { name: "Record tonight’s bedtime" }).click();
+  await q.getByRole("button", { name: /Undo swap/ }).click();
+  await eventually(async () =>
+    assert.deepEqual((await state(p)).household.overrides, {}),
+  );
+  await p.reload();
+  await pickDay(p, today);
+  await pickDay(p, add(today, 1));
+  await p
+    .getByRole("dialog")
+    .getByRole("button", { name: "Swap both nights" })
+    .click();
+  await p.getByRole("dialog").waitFor({ state: "hidden" });
+  s = await state(p);
+  const beforeRestart = { ...s.household.overrides };
+  await pickDay(p, add(today, 2));
+  await p.getByRole("button", { name: "Start pattern here" }).click();
+  assert.equal(
+    await p.getByRole("dialog").getByLabel("Starting date").inputValue(),
+    add(today, 2),
+  );
+  await p
+    .getByRole("dialog")
+    .getByLabel("First night belongs to")
+    .selectOption("b");
+  await p.screenshot({
+    path: "test-results/desktop-new-pattern.png",
+    fullPage: true,
+  });
+  await p
+    .getByRole("dialog")
+    .getByRole("button", { name: "Start new pattern" })
+    .click();
+  await p.getByRole("dialog").waitFor({ state: "hidden" });
+  s = await state(p);
+  assert.equal(s.household.overrides[today], beforeRestart[today]);
+  assert.equal(
+    s.household.overrides[add(today, 1)],
+    beforeRestart[add(today, 1)],
+  );
+  assert.deepEqual(s.household.bedtimeStarts.at(-1), {
+    date: add(today, 2),
+    person: "b",
+  });
+  await q.reload();
+  await (
+    await showDay(q, add(today, 2))
+  )
+    .getByText("Sam", { exact: true })
+    .waitFor();
+  await q.getByRole("button", { name: "New starting date" }).click();
+  await q.getByRole("dialog").getByLabel("Starting date").fill(add(today, 3));
+  await q.screenshot({
+    path: "test-results/mobile-new-pattern.png",
+    fullPage: true,
+  });
   await q
     .getByRole("dialog")
-    .getByRole("button", { name: /Record \d+ pts/ })
+    .getByRole("button", { name: "Cancel", exact: true })
     .click();
-  await q.getByRole("dialog").waitFor({ state: "hidden" });
-  s = await state(q);
   assert.equal(
-    s.household.completions.filter((c) => c.choreId === "bedtime" && !c.undone)
-      .length,
-    1,
+    s.household.chores.some((c) => c.id === "bedtime"),
+    false,
   );
   assert.equal(
     (
@@ -264,6 +344,38 @@ try {
       })
     ).status,
     400,
+  );
+  // Select a pair across month navigation, then undo it from the other account.
+  const monthEnd = new Date(
+    Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)), 0),
+  )
+    .toISOString()
+    .slice(0, 10);
+  const crossFirst =
+    monthEnd > add(today, 3)
+      ? monthEnd
+      : new Date(
+          Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) + 1, 0),
+        )
+          .toISOString()
+          .slice(0, 10);
+  const crossSecond = add(crossFirst, 1);
+  await pickDay(p, crossFirst);
+  await pickDay(p, crossSecond);
+  await p
+    .getByRole("dialog")
+    .getByRole("button", { name: "Swap both nights" })
+    .click();
+  await p.getByRole("dialog").waitFor({ state: "hidden" });
+  await q.reload();
+  await q
+    .getByRole("button", {
+      name: `Undo swap ${crossFirst} and ${crossSecond}`,
+      exact: true,
+    })
+    .click();
+  await eventually(async () =>
+    assert.equal((await state(p)).household.swaps.at(-1).undone, true),
   );
   // Changing the locked starting pattern must fail, with no partial edits.
   s = await state(p);
@@ -320,7 +432,7 @@ try {
     const r = await fetch("/api/backup");
     return r.json();
   });
-  assert.equal(backup.version, 1);
+  assert.equal(backup.version, 2);
   assert.ok(!JSON.stringify(backup).includes("password"));
   const [download] = await Promise.all([
     p.waitForEvent("download"),
@@ -337,6 +449,96 @@ try {
     .getByRole("button", { name: "Replace household data" })
     .click();
   await p.getByRole("dialog").waitFor({ state: "hidden" });
+  // Older backup import keeps historical values while retiring bedtime credits.
+  const legacy = structuredClone(backup);
+  legacy.version = 1;
+  delete legacy.household.bedtimeEvents;
+  legacy.household.overrides = {};
+  legacy.household.swaps = [];
+  legacy.household.chores.push({
+    id: "bedtime",
+    name: "Put kids to sleep",
+    icon: "bedtime",
+    category: "Bedtime",
+    points: 900,
+    intervalDays: null,
+    archived: false,
+  });
+  legacy.household.completions.push({
+    id: "legacy-bedtime",
+    choreId: "bedtime",
+    name: "Put kids to sleep",
+    icon: "bedtime",
+    person: "a",
+    points: 900,
+    date: today,
+    note: "",
+    createdAt: new Date().toISOString(),
+    undone: false,
+  });
+  s = await state(p);
+  assert.equal(
+    (
+      await post(p, "/restore", {
+        version: 1,
+        household: legacy.household,
+        revision: s.household.revision,
+      })
+    ).status,
+    200,
+  );
+  await p.goto(`${origin}/#home`);
+  await p.reload();
+  await p.locator(".balance-people").waitFor();
+  const migrated = (await state(p)).household;
+  assert.equal(
+    migrated.chores.some((c) => c.id === "bedtime"),
+    false,
+  );
+  assert.equal(
+    migrated.completions.find((c) => c.id === "legacy-bedtime").points,
+    900,
+  );
+  assert.equal(
+    await p.getByRole("button", { name: /Record.*bedtime/ }).count(),
+    0,
+  );
+  const credits = migrated.completions.filter(
+    (c) =>
+      c.choreId !== "bedtime" &&
+      !c.undone &&
+      c.date >= add(today, -29) &&
+      c.date <= today,
+  );
+  for (const [index, person] of ["a", "b"].entries()) {
+    const expected = credits
+      .filter((c) => c.person === person)
+      .reduce((sum, c) => sum + c.points, 0);
+    assert.equal(
+      (
+        await p
+          .locator(".balance-people > div")
+          .nth(index)
+          .locator("strong")
+          .innerText()
+      ).trim(),
+      `${expected} pts`,
+    );
+  }
+  await p.goto(`${origin}/#history`);
+  await p.getByText(/Legacy bedtime, excluded from balance/).waitFor();
+  await p.screenshot({
+    path: "test-results/desktop-legacy-history.png",
+    fullPage: true,
+  });
+  s = await state(p);
+  assert.equal(
+    (await post(p, "/restore", { ...backup, revision: s.household.revision }))
+      .status,
+    200,
+  );
+  await p.goto(`${origin}/#settings`);
+  await p.reload();
   await p.getByLabel("Rolling balance").selectOption("7");
   await p.getByRole("button", { name: "Save household settings" }).click();
   await eventually(async () =>
@@ -402,7 +604,7 @@ try {
   );
   assert.deepEqual(pageErrors, []);
   console.log(
-    "Production browser checks passed: setup, two accounts, points/history, settings/archive, bedtime swaps, retry, backup/restore, PWA, reconnect and four responsive widths.",
+    "Production browser checks passed: setup, two accounts, points/history, settings/archive, bedtime swaps/undo/restarts, retry, backup/restore, PWA, reconnect and four responsive widths.",
   );
 } catch (e) {
   console.error(logs);

@@ -1,7 +1,7 @@
+use crate::bedtime::{Event, Schedule, Swap};
 use crate::error::{ApiError, Result};
 use chrono::{Days, NaiveDate};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -40,24 +40,12 @@ pub struct Completion {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Swap {
-    pub id: String,
-    pub first: String,
-    pub second: String,
-    pub first_person: String,
-    pub second_person: String,
-    pub actor: String,
-    pub created_at: String,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Household {
     pub revision: u64,
     pub settings: Settings,
     pub chores: Vec<Chore>,
     pub completions: Vec<Completion>,
-    pub overrides: BTreeMap<String, String>,
-    pub swaps: Vec<Swap>,
+    pub bedtime_events: Vec<Event>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
@@ -85,6 +73,14 @@ pub enum Operation {
         first: String,
         second: String,
     },
+    UndoSwap {
+        id: String,
+    },
+    RestartBedtime {
+        date: String,
+        #[serde(rename = "firstPerson")]
+        first_person: String,
+    },
 }
 pub fn date(value: &str) -> Result<NaiveDate> {
     let parsed = NaiveDate::parse_from_str(value, "%Y-%m-%d")
@@ -101,12 +97,10 @@ pub fn valid_chore(chore: &Chore) -> Result<()> {
     if !text(&chore.id, 80)
         || !text(&chore.name, 80)
         || !text(&chore.icon, 30)
-        || !["Everyday", "Laundry", "Maintenance", "Bedtime"].contains(&chore.category.as_str())
+        || !["Everyday", "Laundry", "Maintenance"].contains(&chore.category.as_str())
         || chore.points > 1000
         || chore.interval_days.is_some_and(|v| v == 0 || v > 3650)
-        || (chore.id == "bedtime"
-            && (chore.archived || chore.category != "Bedtime" || chore.interval_days.is_some()))
-        || (chore.id != "bedtime" && chore.category == "Bedtime")
+        || chore.id == "bedtime"
     {
         return Err(ApiError::bad(
             "Check the chore name, category, points (0–1000), and repeat interval (1–3650 days).",
@@ -150,14 +144,6 @@ impl Household {
             ),
             ("tidy", "Tidy up", "tidy", "Everyday", 4, None),
             (
-                "bedtime",
-                "Put kids to sleep",
-                "bedtime",
-                "Bedtime",
-                5,
-                None,
-            ),
-            (
                 "robot",
                 "Maintain robot vacuum",
                 "robot",
@@ -198,33 +184,15 @@ impl Household {
                 })
                 .collect(),
             completions: vec![],
-            overrides: BTreeMap::new(),
-            swaps: vec![],
+            bedtime_events: vec![],
         }
     }
-    pub fn baseline(&self, value: &str) -> Result<String> {
-        let diff = date(value)?
-            .signed_duration_since(date(&self.settings.bedtime_start)?)
-            .num_days();
-        if diff < 0 {
-            return Err(ApiError::bad(
-                "This date is before the bedtime schedule starts.",
-            ));
-        }
-        Ok(if diff % 2 == 0 {
-            self.settings.bedtime_first.clone()
-        } else if self.settings.bedtime_first == "a" {
-            "b".into()
-        } else {
-            "a".into()
-        })
+    pub fn schedule(&self) -> Result<Schedule> {
+        Schedule::replay(&self.settings, &self.bedtime_events)
     }
-    pub fn assignee(&self, value: &str) -> Result<String> {
-        self.overrides
-            .get(value)
-            .cloned()
-            .map(Ok)
-            .unwrap_or_else(|| self.baseline(value))
+    #[cfg(test)]
+    pub fn assignee(&self, day: &str) -> Result<String> {
+        self.schedule()?.assignee(day)
     }
     pub fn apply(&mut self, op: Operation, actor: &str, today: NaiveDate, now: &str) -> Result<()> {
         if !["a", "b"].contains(&actor) {
@@ -253,20 +221,6 @@ impl Household {
                     .ok_or_else(|| ApiError::bad("This chore is no longer available."))?;
                 if chore.points != expected_points {
                     return Err(ApiError::conflict());
-                }
-                if chore_id == "bedtime" {
-                    if self
-                        .completions
-                        .iter()
-                        .any(|c| c.chore_id == "bedtime" && c.date == day && !c.undone)
-                    {
-                        return Err(ApiError::bad("Bedtime is already recorded for this date."));
-                    }
-                    if self.assignee(&day)? != actor {
-                        return Err(ApiError::bad(
-                            "This is your partner’s bedtime turn. Swap the dates first.",
-                        ));
-                    }
                 }
                 self.completions.push(Completion {
                     id: Uuid::new_v4().to_string(),
@@ -313,52 +267,66 @@ impl Household {
                     return Err(ApiError::conflict());
                 }
                 valid_settings(&settings)?;
-                if (settings.bedtime_start != self.settings.bedtime_start
-                    || settings.bedtime_first != self.settings.bedtime_first)
-                    && (!self.swaps.is_empty()
-                        || self.completions.iter().any(|c| c.chore_id == "bedtime"))
+                if settings.bedtime_start != self.settings.bedtime_start
+                    || settings.bedtime_first != self.settings.bedtime_first
                 {
                     return Err(ApiError::bad(
-                        "The bedtime starting pattern is locked after the first swap or completion. Swap individual dates instead.",
+                        "Change the bedtime pattern from a date in the calendar.",
                     ));
                 }
                 self.settings = settings;
             }
             Operation::Swap { first, second } => {
-                if first == second || date(&first)? < today || date(&second)? < today {
-                    return Err(ApiError::bad("Choose two different dates, today or later."));
+                if date(&first)? < today || date(&second)? < today {
+                    return Err(ApiError::bad("Choose two upcoming nights, today or later."));
                 }
-                if self.completions.iter().any(|c| {
-                    c.chore_id == "bedtime" && !c.undone && (c.date == first || c.date == second)
-                }) {
-                    return Err(ApiError::bad(
-                        "A completed bedtime cannot be swapped. Undo the completion first.",
-                    ));
+                let mut schedule = self.schedule()?;
+                let event = Event::Swap {
+                    swap: Swap {
+                        id: Uuid::new_v4().to_string(),
+                        first_person: schedule.assignee(&first)?,
+                        second_person: schedule.assignee(&second)?,
+                        first,
+                        second,
+                        actor: actor.into(),
+                        created_at: now.into(),
+                    },
+                };
+                schedule.apply(&event)?;
+                self.bedtime_events.push(event);
+            }
+            Operation::UndoSwap { id } => {
+                let mut schedule = self.schedule()?;
+                let view = schedule
+                    .swaps
+                    .iter()
+                    .find(|s| s.swap.id == id)
+                    .ok_or_else(|| ApiError::bad("This swap could not be found."))?;
+                if let Some(reason) = &view.undo_blocked {
+                    return Err(ApiError::bad(reason));
                 }
-                let a = self.assignee(&first)?;
-                let b = self.assignee(&second)?;
-                if a == b {
-                    return Err(ApiError::bad(
-                        "Choose one night for each person, so the swap keeps things equal.",
-                    ));
-                }
-                self.overrides.insert(first.clone(), b.clone());
-                self.overrides.insert(second.clone(), a.clone());
-                if self.baseline(&first)? == b {
-                    self.overrides.remove(&first);
-                }
-                if self.baseline(&second)? == a {
-                    self.overrides.remove(&second);
-                }
-                self.swaps.push(Swap {
-                    id: Uuid::new_v4().to_string(),
-                    first,
-                    second,
-                    first_person: a,
-                    second_person: b,
+                let event = Event::UndoSwap {
+                    swap_id: id,
                     actor: actor.into(),
                     created_at: now.into(),
-                });
+                };
+                schedule.apply(&event)?;
+                self.bedtime_events.push(event);
+            }
+            Operation::RestartBedtime {
+                date: day,
+                first_person,
+            } => {
+                let mut schedule = self.schedule()?;
+                let event = Event::Restart {
+                    id: Uuid::new_v4().to_string(),
+                    date: day,
+                    first_person,
+                    actor: actor.into(),
+                    created_at: now.into(),
+                };
+                schedule.apply(&event)?;
+                self.bedtime_events.push(event);
             }
         }
         self.revision += 1;
@@ -368,8 +336,7 @@ impl Household {
         valid_settings(&self.settings)?;
         if self.chores.len() > 200
             || self.completions.len() > 100000
-            || self.swaps.len() > 100000
-            || self.overrides.len() > 100000
+            || self.bedtime_events.len() > 100000
         {
             return Err(ApiError::bad("Backup exceeds household limits."));
         }
@@ -380,10 +347,6 @@ impl Household {
                 return Err(ApiError::bad("Duplicate chore."));
             }
         }
-        if !self.chores.iter().any(|c| c.id == "bedtime") {
-            return Err(ApiError::bad("Bedtime chore is required."));
-        }
-        let mut days = std::collections::HashSet::new();
         let mut entry_ids = std::collections::HashSet::new();
         for c in &self.completions {
             date(&c.date)?;
@@ -393,284 +356,56 @@ impl Household {
                 || !["a", "b"].contains(&c.person.as_str())
                 || c.points > 1000
                 || c.note.chars().count() > 500
-                || !self.chores.iter().any(|t| t.id == c.chore_id)
-                || (c.chore_id == "bedtime"
-                    && !c.undone
-                    && (!days.insert(&c.date) || self.assignee(&c.date)? != c.person))
+                || (c.chore_id != "bedtime" && !self.chores.iter().any(|t| t.id == c.chore_id))
             {
                 return Err(ApiError::bad("Invalid completion in backup."));
             }
         }
-        // Replay all paired swaps to prove imported assignments preserve the alternation's totals.
-        let mut replay = self.clone();
-        replay.overrides.clear();
-        for swap in &self.swaps {
-            if swap.first == swap.second
-                || !["a", "b"].contains(&swap.actor.as_str())
-                || replay.assignee(&swap.first)? != swap.first_person
-                || replay.assignee(&swap.second)? != swap.second_person
-                || swap.first_person == swap.second_person
-            {
-                return Err(ApiError::bad("Invalid paired swap in backup."));
-            }
-            replay
-                .overrides
-                .insert(swap.first.clone(), swap.second_person.clone());
-            replay
-                .overrides
-                .insert(swap.second.clone(), swap.first_person.clone());
-            if replay.baseline(&swap.first)? == swap.second_person {
-                replay.overrides.remove(&swap.first);
-            }
-            if replay.baseline(&swap.second)? == swap.first_person {
-                replay.overrides.remove(&swap.second);
-            }
-        }
-        if replay.overrides != self.overrides {
-            return Err(ApiError::bad(
-                "Backup assignments do not match paired swaps.",
-            ));
-        }
+        self.schedule()?;
         Ok(())
     }
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn household() -> Household {
-        Household::new(Settings {
-            household_name: "Home".into(),
-            names: ["A".into(), "B".into()],
-            balance_days: 30,
-            bedtime_start: "2026-10-01".into(),
-            bedtime_first: "a".into(),
-        })
+
+pub fn migrate_legacy(mut value: serde_json::Value) -> Result<Household> {
+    let swaps: Vec<Swap> = serde_json::from_value(
+        value
+            .get("swaps")
+            .cloned()
+            .ok_or_else(|| ApiError::bad("Missing legacy calendar."))?,
+    )?;
+    let overrides: std::collections::BTreeMap<String, String> = serde_json::from_value(
+        value
+            .get("overrides")
+            .cloned()
+            .ok_or_else(|| ApiError::bad("Missing legacy assignments."))?,
+    )?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| ApiError::bad("Invalid household backup."))?;
+    object.remove("swaps");
+    object.remove("overrides");
+    let chores = object
+        .get_mut("chores")
+        .and_then(|v| v.as_array_mut())
+        .ok_or_else(|| ApiError::bad("Missing chores."))?;
+    chores.retain(|c| c["id"] != "bedtime");
+    object.insert(
+        "bedtimeEvents".into(),
+        serde_json::to_value(
+            swaps
+                .into_iter()
+                .map(|swap| Event::Swap { swap })
+                .collect::<Vec<_>>(),
+        )?,
+    );
+    let h: Household = serde_json::from_value(value)?;
+    h.validate()?;
+    if h.schedule()?.overrides != overrides {
+        return Err(ApiError::bad(
+            "Legacy assignments do not match paired swaps.",
+        ));
     }
-    fn today() -> NaiveDate {
-        date("2026-10-01").unwrap()
-    }
-    #[test]
-    fn swap_conserves_nights_and_can_reverse() {
-        let mut h = household();
-        let count = |h: &Household| {
-            (1..=30)
-                .filter(|d| h.assignee(&format!("2026-10-{d:02}")).unwrap() == "a")
-                .count()
-        };
-        assert_eq!(count(&h), 15);
-        h.apply(
-            Operation::Swap {
-                first: "2026-10-01".into(),
-                second: "2026-10-04".into(),
-            },
-            "a",
-            today(),
-            "now",
-        )
-        .unwrap();
-        assert_eq!(count(&h), 15);
-        assert_eq!(h.assignee("2026-10-01").unwrap(), "b");
-        h.validate().unwrap();
-        h.apply(
-            Operation::Swap {
-                first: "2026-10-01".into(),
-                second: "2026-10-04".into(),
-            },
-            "b",
-            today(),
-            "now",
-        )
-        .unwrap();
-        assert!(h.overrides.is_empty());
-        h.validate().unwrap();
-    }
-    #[test]
-    fn rejects_unfair_past_and_completed_swaps() {
-        let mut h = household();
-        for (first, second) in [
-            ("2026-10-01", "2026-10-03"),
-            ("2026-09-30", "2026-10-01"),
-            ("2026-10-01", "2026-10-01"),
-        ] {
-            assert!(
-                h.apply(
-                    Operation::Swap {
-                        first: first.into(),
-                        second: second.into()
-                    },
-                    "a",
-                    today(),
-                    "now"
-                )
-                .is_err()
-            );
-        }
-        h.apply(
-            Operation::Complete {
-                chore_id: "bedtime".into(),
-                expected_points: 5,
-                date: "2026-10-01".into(),
-                note: "".into(),
-            },
-            "a",
-            today(),
-            "now",
-        )
-        .unwrap();
-        assert!(
-            h.apply(
-                Operation::Swap {
-                    first: "2026-10-01".into(),
-                    second: "2026-10-02".into()
-                },
-                "a",
-                today(),
-                "now"
-            )
-            .is_err()
-        );
-    }
-    #[test]
-    fn historical_points_undo_and_bedtime_uniqueness() {
-        let mut h = household();
-        let op = Operation::Complete {
-            chore_id: "bedtime".into(),
-            expected_points: 5,
-            date: "2026-10-01".into(),
-            note: "".into(),
-        };
-        assert!(h.apply(op.clone(), "b", today(), "now").is_err());
-        h.apply(op.clone(), "a", today(), "now").unwrap();
-        assert!(h.apply(op.clone(), "a", today(), "now").is_err());
-        let id = h.completions[0].id.clone();
-        assert!(
-            h.apply(Operation::Undo { id: id.clone() }, "b", today(), "now")
-                .is_err()
-        );
-        let mut chore = h.chores.iter().find(|c| c.id == "bedtime").unwrap().clone();
-        chore.points = 20;
-        h.apply(
-            Operation::SaveChore {
-                expected: Some(h.chores.iter().find(|c| c.id == "bedtime").unwrap().clone()),
-                chore,
-            },
-            "a",
-            today(),
-            "now",
-        )
-        .unwrap();
-        assert_eq!(h.completions[0].points, 5);
-        h.apply(Operation::Undo { id }, "a", today(), "now")
-            .unwrap();
-        let op = Operation::Complete {
-            chore_id: "bedtime".into(),
-            expected_points: 20,
-            date: "2026-10-01".into(),
-            note: "".into(),
-        };
-        h.apply(op, "a", today(), "now").unwrap();
-        assert_eq!(h.completions[1].points, 20);
-    }
-    #[test]
-    fn stale_edit_values_cannot_overwrite_new_configuration() {
-        let mut h = household();
-        let original = h.chores[0].clone();
-        let mut newer = original.clone();
-        newer.points = 9;
-        h.apply(
-            Operation::SaveChore {
-                chore: newer.clone(),
-                expected: Some(original.clone()),
-            },
-            "b",
-            today(),
-            "now",
-        )
-        .unwrap();
-        let mut stale = original.clone();
-        stale.name = "Old editor".into();
-        assert!(
-            h.apply(
-                Operation::SaveChore {
-                    chore: stale,
-                    expected: Some(original)
-                },
-                "a",
-                today(),
-                "now"
-            )
-            .is_err()
-        );
-        assert_eq!(h.chores[0], newer);
-        assert!(
-            h.apply(
-                Operation::Complete {
-                    chore_id: "dishwasher".into(),
-                    expected_points: 2,
-                    date: "2026-10-01".into(),
-                    note: "".into()
-                },
-                "a",
-                today(),
-                "now"
-            )
-            .is_err()
-        );
-        let old_settings = h.settings.clone();
-        let mut changed = old_settings.clone();
-        changed.balance_days = 7;
-        h.apply(
-            Operation::SaveSettings {
-                settings: changed.clone(),
-                expected: old_settings.clone(),
-            },
-            "b",
-            today(),
-            "now",
-        )
-        .unwrap();
-        assert!(
-            h.apply(
-                Operation::SaveSettings {
-                    settings: old_settings.clone(),
-                    expected: old_settings
-                },
-                "a",
-                today(),
-                "now"
-            )
-            .is_err()
-        );
-        assert_eq!(h.settings, changed);
-    }
-    #[test]
-    fn locks_anchor_and_rejects_forged_backup() {
-        let mut h = household();
-        h.apply(
-            Operation::Swap {
-                first: "2026-10-01".into(),
-                second: "2026-10-02".into(),
-            },
-            "a",
-            today(),
-            "now",
-        )
-        .unwrap();
-        let mut settings = h.settings.clone();
-        settings.bedtime_first = "b".into();
-        assert!(
-            h.apply(
-                Operation::SaveSettings {
-                    expected: h.settings.clone(),
-                    settings
-                },
-                "a",
-                today(),
-                "now"
-            )
-            .is_err()
-        );
-        h.overrides.insert("2026-10-03".into(), "b".into());
-        assert!(h.validate().is_err());
-    }
+    Ok(h)
 }
+#[cfg(test)]
+mod tests;

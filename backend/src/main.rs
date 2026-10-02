@@ -1,3 +1,4 @@
+mod bedtime;
 mod domain;
 mod error;
 #[cfg(test)]
@@ -106,7 +107,7 @@ async fn verify(value: String, hashed: String) -> Result<bool> {
     .map_err(ApiError::internal)
 }
 fn initialize(path: &std::path::Path) -> Result<Connection> {
-    let db = Connection::open(path)?;
+    let mut db = Connection::open(path)?;
     db.busy_timeout(std::time::Duration::from_secs(10))?;
     let mode = std::env::var("CHORES_SQLITE_JOURNAL_MODE").unwrap_or("WAL".into());
     if !["WAL", "DELETE"].contains(&mode.as_str()) {
@@ -116,7 +117,7 @@ fn initialize(path: &std::path::Path) -> Result<Connection> {
     db.pragma_update(None, "synchronous", "EXTRA")?;
     db.pragma_update(None, "foreign_keys", true)?;
     let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-    if version > 1 {
+    if version > 2 {
         return Err(ApiError::bad("This database needs a newer Chores release."));
     }
     db.execute_batch("BEGIN IMMEDIATE;
@@ -124,7 +125,20 @@ fn initialize(path: &std::path::Path) -> Result<Connection> {
       CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY CHECK(id IN ('a','b')), email TEXT UNIQUE NOT NULL, password TEXT NOT NULL, recovery TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions(hash TEXT PRIMARY KEY, person TEXT NOT NULL REFERENCES users(id), expires INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY,person TEXT NOT NULL,payload TEXT NOT NULL);
-      PRAGMA user_version=1;COMMIT;")?;
+      COMMIT;")?;
+    if version < 2 {
+        let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let raw: Option<String> = tx
+            .query_row("SELECT state FROM household WHERE id=1", [], |r| r.get(0))
+            .optional()?;
+        if let Some(raw) = raw {
+            let mut h = domain::migrate_legacy(serde_json::from_str(&raw)?)?;
+            h.revision += 1;
+            write(&tx, &h)?;
+        }
+        tx.pragma_update(None, "user_version", 2)?;
+        tx.commit()?;
+    }
     Ok(db)
 }
 fn read(db: &Connection) -> Result<Household> {
@@ -430,15 +444,19 @@ fn snapshot(server: &Server, person: String) -> Result<Value> {
     let h = read(&db)?;
     let today = Utc::now()
         .with_timezone(&chrono_tz::Europe::Helsinki)
-        .date_naive()
-        .to_string();
-    Ok(json!({"person":person,"household":h,"today":today}))
+        .date_naive();
+    let schedule = h.schedule()?;
+    let mut household = serde_json::to_value(h)?;
+    household["overrides"] = json!(schedule.overrides);
+    household["swaps"] = json!(schedule.swaps);
+    household["bedtimeStarts"] = json!(schedule.starts);
+    Ok(json!({"person":person,"household":household,"today":today.to_string()}))
 }
 async fn state(State(server): State<Server>, headers: HeaderMap) -> Result<Json<Value>> {
     let person = actor(&server, &headers)?;
     Ok(Json(snapshot(&server, person)?))
 }
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Mutation {
     id: String,
@@ -515,28 +533,30 @@ async fn backup(
         header::CONTENT_DISPOSITION,
         "attachment; filename=chores-backup.json".parse().unwrap(),
     );
-    Ok((headers, Json(json!({"version":1,"household":h}))))
+    Ok((headers, Json(json!({"version":2,"household":h}))))
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Restore {
     revision: u64,
     version: u32,
-    household: Household,
+    household: Value,
 }
 async fn restore(
     State(server): State<Server>,
     headers: HeaderMap,
-    Json(mut input): Json<Restore>,
+    Json(input): Json<Restore>,
 ) -> Result<Json<Value>> {
     let person = actor(&server, &headers)?;
     if person != "a" {
         return Err(ApiError::forbidden());
     }
-    if input.version != 1 {
-        return Err(ApiError::bad("Unsupported backup version."));
-    }
-    input.household.validate()?;
+    let mut household = match input.version {
+        1 => domain::migrate_legacy(input.household)?,
+        2 => serde_json::from_value::<Household>(input.household)?,
+        _ => return Err(ApiError::bad("Unsupported backup version.")),
+    };
+    household.validate()?;
     {
         let mut db = server.conn()?;
         let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -544,8 +564,8 @@ async fn restore(
         if existing.revision != input.revision {
             return Err(ApiError::conflict());
         }
-        input.household.revision = existing.revision + 1;
-        write(&tx, &input.household)?;
+        household.revision = existing.revision + 1;
+        write(&tx, &household)?;
         tx.commit()?;
     }
     Ok(Json(snapshot(&server, person)?))

@@ -12,10 +12,10 @@ The user authorized building, publishing to a private repository, and deploying 
 - Exactly two adults, with separate logins. Names, account details, bedtime starting date and first adult are entered during first-time setup.
 - **No setup token.** First launch configures the household directly. Both accounts are created together, then each person signs in independently.
 - Configurable chore list and configurable point values in settings.
-- Initial chores: run dishwasher, run clothes washer, hang laundry to dry, fold and put away laundry, tidy up, put kids to sleep, maintain robot vacuum, change HVAC filters, and clean drain filters.
+- Initial chores: run dishwasher, run clothes washer, hang laundry to dry, fold and put away laundry, tidy up, maintain robot vacuum, change HVAC filters, and clean drain filters.
 - Compare contributions using a **rolling last-30-days balance**, adjustable in settings. Offer other rolling periods and all-time totals. Preserve all completion history when a record leaves the balance window.
 - Alternate bedtime duties daily. Allow exchanging two dates, one assigned to each adult, with both changes committed together. Swaps preserve total turns; monthly totals may differ for a swap across months.
-- Explicitly record completed bedtime duties for points and actual-night history. Do not automatically award points from scheduled duties.
+- Bedtime is schedule-only. It is not a chore, has no points, and has no completion buttons. Existing bedtime completion records retain their original values in history and are excluded from the balance.
 - Keep the app simple; no AI integration.
 - Name: **Chores**. Private address: **https://chores.fruitiex.org**. Private repository: **FruitieX/chores**.
 
@@ -29,9 +29,11 @@ The user authorized building, publishing to a private repository, and deploying 
 - Shared devices refresh on a short poll, window focus, reconnect and successful mutations. Recording needs connectivity; show an explicit offline state. The installable PWA caches the static shell, with no offline mutation queue in this version.
 - Chore completions preserve the chore name and point value at recording time. Subsequent configuration changes apply only to new records.
 - Undo removes credit but preserves a marked history entry; only its recorder can undo a completion.
-- Archive chores without deleting history. Bedtime remains a dedicated calendar chore with configurable points.
+- Archive chores without deleting history. Bedtime turns live only in the calendar.
 - Optional repeat intervals support maintenance due status, based on the latest unremoved completion. Unrecorded maintenance is marked clearly.
-- Bedtime starting pattern can be changed until the first bedtime completion or swap, then is preserved. Swaps are available for uncompleted nights today or later, and must exchange different assignees.
+- Tap an upcoming calendar night, then an opposite-person night, to confirm an atomic swap; selection persists across month navigation. Either adult can undo a swap, including after its dates pass. Later overlapping swaps must be undone first; a new pattern can supersede a swap.
+- Choose a date and first adult directly in the calendar to restart daily alternation from that day. Preserve every earlier assignment. Replace later starting patterns and overrides at or after the chosen date, keeping the event history. A crossing swap keeps its earlier assignment and is marked replaced. The setup anchor stays immutable.
+- Backups use version 2 and replay swaps, undos and date-specific restarts. Version 1 imports migrate automatically. SQLite upgrades transactionally to schema 2, preserving accounts, sessions, operation identifiers and all historical completion snapshots.
 - Downloadable household JSON backups exclude passwords. Restore is confirmed and revision guarded, and validates paired swap history. A database backup CLI supports complete operational backups.
 - Persistent homelab NFS volume, one replica with Recreate, SQLite DELETE journal mode and synchronous EXTRA. Existing private Envoy Gateway HTTPS route and GHCR pull credentials.
 
@@ -71,7 +73,7 @@ The user authorized building, publishing to a private repository, and deploying 
 - [x] Confirm the live app is uninitialized and ready for the user's first-time setup.
 - [x] Report live app and private repo links and any practical limitations; mark the active goal complete only after all required work is done.
 
-## Completion record — 2026-10-01
+## Completion record — 2026-10-01 (original release)
 
 Implementation, verification, source publication and homelab deployment are complete.
 
@@ -87,3 +89,18 @@ Implementation, verification, source publication and homelab deployment are comp
 - Real mobile and desktop screenshots from isolated households are in ignored `test-results/`; the read-only production first-launch capture is `test-results/live-first-launch.png`.
 
 No AI integration, offline completion queue or external account recovery service is included. Recording requires LAN/VPN connectivity. Names, accounts and the bedtime starting pattern are entered in first launch without a setup token. Household days use Europe/Helsinki time. Subsequent CI runs publish images; deployment upgrades are applied through pinned homelab manifests.
+
+## Bedtime calendar update — 2026-10-02
+
+The user's follow-up supersedes the original release's bedtime logging decisions.
+
+- [x] Remove bedtime from the chore catalog, point balance and all recording actions.
+- [x] Preserve legacy bedtime records and their original point values in history.
+- [x] Select two nights directly in the calendar, with a confirmation preview and cross-month selection.
+- [x] Let either adult undo swaps; preserve atomic paired changes and show dependency/replacement reasons.
+- [x] Add “New starting date” and selected-day “Start pattern here”, preserving all prior dates.
+- [x] Migrate existing households, keep separate accounts and accept older household backups.
+- [x] Complete Rust, frontend, browser, screenshot and container checks.
+  - All 17 Rust tests, formatting, Clippy, frontend type checking/build and formatting pass. Two-account browser checks cover tap-to-swap, cross-month selection, shared undo, dated restarts, legacy backup migration, historical values and balance exclusion, PWA, reconnect and four responsive widths. Mobile and desktop screenshots were inspected. Nix container checks pass for persistence, idempotency, private backup/full restoration and non-root/read-only operation.
+- [ ] Commit/push the update to the private source repository and pass CI.
+- [ ] Take a private database backup, deploy a pinned image and verify the private ingress.

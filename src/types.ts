@@ -28,6 +28,9 @@ export type Completion = {
   undone: boolean;
 };
 export type Swap = {
+  undone: boolean;
+  superseded: boolean;
+  undoBlocked: string | null;
   id: string;
   first: string;
   second: string;
@@ -43,6 +46,8 @@ export type Household = {
   completions: Completion[];
   overrides: Record<string, Person>;
   swaps: Swap[];
+  bedtimeStarts: { date: string; person: Person }[];
+  bedtimeEvents: unknown[];
 };
 export type Snapshot = { person: Person; household: Household; today: string };
 export type Operation =
@@ -56,28 +61,27 @@ export type Operation =
   | { type: "undo"; id: string }
   | { type: "saveChore"; chore: Chore; expected: Chore | null }
   | { type: "saveSettings"; settings: Settings; expected: Settings }
-  | { type: "swap"; first: string; second: string };
+  | { type: "swap"; first: string; second: string }
+  | { type: "undoSwap"; id: string }
+  | { type: "restartBedtime"; date: string; firstPerson: Person };
 export function addDays(date: string, days: number) {
   const d = new Date(`${date}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
 export function assignee(h: Household, date: string): Person | null {
-  if (date < h.settings.bedtimeStart) return null;
+  const start = [...h.bedtimeStarts].reverse().find((s) => s.date <= date);
+  if (!start) return null;
   const days = Math.round(
-    (Date.parse(`${date}T12:00:00Z`) -
-      Date.parse(`${h.settings.bedtimeStart}T12:00:00Z`)) /
+    (Date.parse(`${date}T12:00:00Z`) - Date.parse(`${start.date}T12:00:00Z`)) /
       86400000,
   );
   return (
     h.overrides[date] ??
-    (days % 2 === 0
-      ? h.settings.bedtimeFirst
-      : h.settings.bedtimeFirst === "a"
-        ? "b"
-        : "a")
+    (days % 2 === 0 ? start.person : start.person === "a" ? "b" : "a")
   );
 }
+
 export function personName(h: Household, p: Person) {
   return h.settings.names[p === "a" ? 0 : 1];
 }

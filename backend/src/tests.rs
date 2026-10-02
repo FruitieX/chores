@@ -278,3 +278,147 @@ fn password_rotation_blocks_a_login_verified_against_old_credentials() {
     );
     assert!(sign_in(&server, "a", Value::Null, "new-password-hash").is_ok());
 }
+
+#[test]
+fn paired_calendar_operations_are_idempotent_and_revision_guarded() {
+    let s = server();
+    let mut db = s.conn().unwrap();
+    db.execute(
+        "INSERT INTO household VALUES(1,?1)",
+        [serde_json::to_string(&Household::new(settings())).unwrap()],
+    )
+    .unwrap();
+    let today = domain::date("2026-10-01").unwrap();
+    let mut m = Mutation {
+        id: "calendar-idempotent-swap".into(),
+        revision: 0,
+        operation: Operation::Swap {
+            first: "2026-10-01".into(),
+            second: "2026-10-02".into(),
+        },
+    };
+    mutate_db(&mut db, "a", m.clone(), today).unwrap();
+    mutate_db(&mut db, "a", m.clone(), today).unwrap();
+    let h = read(&db).unwrap();
+    assert_eq!(h.bedtime_events.len(), 1);
+    let id = h.schedule().unwrap().swaps[0].swap.id.clone();
+    m = Mutation {
+        id: "calendar-idempotent-undo".into(),
+        revision: 0,
+        operation: Operation::UndoSwap { id },
+    };
+    assert!(mutate_db(&mut db, "b", m.clone(), today).is_err());
+    assert_eq!(read(&db).unwrap().bedtime_events.len(), 1);
+    m.revision = 1;
+    mutate_db(&mut db, "b", m.clone(), today).unwrap();
+    mutate_db(&mut db, "b", m, today).unwrap();
+    assert!(read(&db).unwrap().schedule().unwrap().overrides.is_empty());
+    let m = Mutation {
+        id: "calendar-idempotent-restart".into(),
+        revision: 2,
+        operation: Operation::RestartBedtime {
+            date: "2026-10-03".into(),
+            first_person: "b".into(),
+        },
+    };
+    mutate_db(&mut db, "a", m.clone(), today).unwrap();
+    mutate_db(&mut db, "a", m, today).unwrap();
+    let h = read(&db).unwrap();
+    assert_eq!(h.revision, 3);
+    assert_eq!(h.bedtime_events.len(), 3);
+    assert_eq!(h.assignee("2026-10-01").unwrap(), "a");
+    assert_eq!(h.assignee("2026-10-03").unwrap(), "b");
+}
+
+#[test]
+fn database_upgrade_preserves_accounts_credits_and_calendar_once() {
+    let path =
+        std::env::temp_dir().join(format!("chores-migration-{}.sqlite3", uuid::Uuid::new_v4()));
+    let mut legacy = serde_json::to_value(Household::new(settings())).unwrap();
+    let object = legacy.as_object_mut().unwrap();
+    object.remove("bedtimeEvents");
+    object.insert(
+        "overrides".into(),
+        json!({"2026-10-01":"b","2026-10-02":"a"}),
+    );
+    object.insert("swaps".into(),json!([{"id":"old-swap","first":"2026-10-01","second":"2026-10-02","firstPerson":"a","secondPerson":"b","actor":"a","createdAt":"now"}]));
+    object["chores"].as_array_mut().unwrap().push(json!({"id":"bedtime","name":"Put kids to sleep","icon":"bedtime","category":"Bedtime","points":5,"intervalDays":null,"archived":false}));
+    object["completions"].as_array_mut().unwrap().push(json!({"id":"old-credit","choreId":"bedtime","name":"Put kids to sleep","icon":"bedtime","person":"b","points":5,"date":"2026-10-01","note":"","createdAt":"now","undone":false}));
+    {
+        let db = initialize(&path).unwrap();
+        db.execute("INSERT INTO household VALUES(1,?1)", [legacy.to_string()])
+            .unwrap();
+        db.execute(
+            "INSERT INTO users VALUES('a','fixture@example.test','saved-hash','saved-recovery')",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO sessions VALUES('saved-session','a',9999999999)",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO operations VALUES('old-operation','a','saved-payload')",
+            [],
+        )
+        .unwrap();
+        db.pragma_update(None, "user_version", 1).unwrap();
+    }
+    // A malformed calendar aborts the migration without advancing the schema or changing state.
+    let mut invalid = legacy.clone();
+    invalid["overrides"]["2026-10-01"] = json!("a");
+    {
+        let db = Connection::open(&path).unwrap();
+        db.execute("UPDATE household SET state=?1", [invalid.to_string()])
+            .unwrap();
+    }
+    assert!(initialize(&path).is_err());
+    {
+        let db = Connection::open(&path).unwrap();
+        assert_eq!(
+            db.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.query_row("SELECT state FROM household", [], |r| r.get::<_, String>(0))
+                .unwrap(),
+            invalid.to_string()
+        );
+        db.execute("UPDATE household SET state=?1", [legacy.to_string()])
+            .unwrap();
+    }
+    for _ in 0..2 {
+        let db = initialize(&path).unwrap();
+        let h = read(&db).unwrap();
+        assert_eq!(h.revision, 1);
+        assert!(!h.chores.iter().any(|c| c.id == "bedtime"));
+        assert_eq!(h.completions[0].points, 5);
+        assert_eq!(h.assignee("2026-10-01").unwrap(), "b");
+        assert_eq!(h.schedule().unwrap().swaps.len(), 1);
+        assert_eq!(
+            db.query_row("SELECT password FROM users WHERE id='a'", [], |r| r
+                .get::<_, String>(0))
+                .unwrap(),
+            "saved-hash"
+        );
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM sessions", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.query_row("SELECT count(*) FROM operations", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+    }
+    std::fs::remove_file(path).unwrap();
+}
