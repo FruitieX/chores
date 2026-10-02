@@ -56,3 +56,11 @@ A user who loses both password and recovery code can restore a known full databa
 [CI run 36919334442](https://github.com/FruitieX/chores/actions/runs/36919334442) passed for application revision `ce6e187961869a1b320c7692377e1d9d79cf8dc8`. Homelab commit `ea05c36` deploys its private image digest `sha256:5a19a186ac7da47e846b151f441c62b39a6dcbacdca9573fbd5b02a0b37f1083`. Flux reports Ready with one ready replica and a bound 5 GiB NFS volume.
 
 DNS resolves the app to `192.168.11.99`; private HTTPS readiness passes, and the public gateway returns 404. A read-only production browser check confirms first-launch setup, an active service worker and zero Chromium installability errors. No production household was created. Household dates and the rolling balance use Europe/Helsinki time.
+
+## Verified bedtime calendar update — 2026-10-02
+
+[CI run 36970079384](https://github.com/FruitieX/chores/actions/runs/36970079384) passed for runtime revision `f97f8e11ef8db907becce9a309aab4403186e96a`. Homelab commit `bbe26a3` pins digest `sha256:228eb6d8828bcd02018b812df71661352217e519ee05c71c7ef1b4953e9d49af`. Flux is Ready/Healthy, with one ready replica and the existing Bound NFS claim.
+
+Full backups were taken before and after the schema 2 migration. Private comparisons verified unchanged accounts, sessions, settings and completion snapshots, and preserved existing paired swaps. Operational backups are outside Git in `/home/rasse/.local/share/chores/backups/`, with mode 0600.
+
+Live browser verification loaded the new assets over private HTTPS, confirmed readiness, unauthenticated API protection and the service worker, and found no page errors or mobile overflow. It made no writes. The public gateway returns 404; anonymous GHCR access returns 401. Bedtime is now schedule-only, with direct calendar swaps, undo and date-specific restarts.

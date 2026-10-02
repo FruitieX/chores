@@ -102,5 +102,13 @@ The user's follow-up supersedes the original release's bedtime logging decisions
 - [x] Migrate existing households, keep separate accounts and accept older household backups.
 - [x] Complete Rust, frontend, browser, screenshot and container checks.
   - All 17 Rust tests, formatting, Clippy, frontend type checking/build and formatting pass. Two-account browser checks cover tap-to-swap, cross-month selection, shared undo, dated restarts, legacy backup migration, historical values and balance exclusion, PWA, reconnect and four responsive widths. Mobile and desktop screenshots were inspected. Nix container checks pass for persistence, idempotency, private backup/full restoration and non-root/read-only operation.
-- [ ] Commit/push the update to the private source repository and pass CI.
-- [ ] Take a private database backup, deploy a pinned image and verify the private ingress.
+- [x] Commit/push the update to the private source repository and pass CI.
+- [x] Take a private database backup, deploy a pinned image and verify the private ingress.
+
+The update is deployed and verified:
+
+- Runtime revision: `f97f8e11ef8db907becce9a309aab4403186e96a`; [CI run 36970079384](https://github.com/FruitieX/chores/actions/runs/36970079384) passed all checks and private publication.
+- Image digest: `sha256:228eb6d8828bcd02018b812df71661352217e519ee05c71c7ef1b4953e9d49af`. Anonymous registry access returns 401.
+- Homelab commit: `bbe26a39c625cc3ebadbf3d31926d10f96ddd31e`. Flux Ready/Healthy, one ready replica, persistent claim Bound.
+- Private pre-upgrade and post-upgrade full backups pass integrity checks. Comparing them confirms schema 2, unchanged accounts and sessions, unchanged completion snapshots and household settings, and preserved existing paired swaps. Backup files stay outside Git.
+- Live HTTPS browser verification loaded the current frontend and service worker, checked mobile layout and unauthenticated API privacy, and found no page errors. It made zero POST requests. Private readiness returns 200; public gateway returns 404.
