@@ -8,7 +8,7 @@ The user authorized building, publishing to a private repository, and deploying 
 
 ## Agreed product requirements
 
-- A simpler companion to `~/forkbasket`, using a similar warm cream and forest green design, friendly serif headings, and large mobile controls.
+- A simple chores sharing app with a warm cream and forest green design, friendly serif headings, and large mobile controls.
 - Exactly two adults, with separate logins. Names, account details, bedtime starting date and first adult are entered during first-time setup.
 - **No setup token.** First launch configures the household directly. Both accounts are created together, then each person signs in independently.
 - Configurable chore list and configurable point values in settings.
@@ -21,7 +21,7 @@ The user authorized building, publishing to a private repository, and deploying 
 
 ## Implementation decisions
 
-- React, TypeScript and Vite frontend; Lucide icons; Radix accessible dialogs. Reuse ForkBasket's locally bundled DM Sans and Fraunces fonts with license files.
+- React, TypeScript and Vite frontend; Lucide icons; Radix accessible dialogs. Locally bundle DM Sans and Fraunces fonts with license files.
 - Rust, Tokio and Axum backend with SQLite. One non-root process serves the API and compiled frontend in a reproducible Nix-built container.
 - Exactly two stable profile identities. Each completion is attributed to the signed-in account, rather than a profile picker.
 - Passwords use Argon2. Sessions use HttpOnly, SameSite cookies and Secure cookies under HTTPS. Same-origin writes are enforced. Recovery codes are displayed once at setup and rotate on recovery/password changes.
@@ -41,7 +41,7 @@ The user authorized building, publishing to a private repository, and deploying 
 
 ### Product and implementation
 
-- [x] Inspect ForkBasket design, architecture and homelab conventions.
+- [x] Establish the design and architecture, and inspect homelab conventions.
 - [x] Collect initial product answers and record the accepted decisions.
 - [x] Initialize the project, locked Nix environment, frontend and Rust backend dependencies.
 - [x] Implement household setup without a setup token, separate logins and account recovery.
@@ -68,7 +68,7 @@ The user authorized building, publishing to a private repository, and deploying 
 - [x] Create private FruitieX/chores repository, commit with Conventional Commits and push tested changes.
 - [x] Add CI validation and private GHCR image publication.
 - [x] Add Chores homelab Flux manifests with private ingress, persistent NFS storage and pinned image.
-- [x] Commit/push only task-related homelab changes; preserve unrelated work, including the existing ForkBasket README edit.
+- [x] Commit/push only task-related homelab changes; preserve unrelated work.
 - [x] Verify Flux health, ready replica, persistent volume, private HTTPS and lack of public ingress exposure.
 - [x] Confirm the live app is uninitialized and ready for the user's first-time setup.
 - [x] Report live app and private repo links and any practical limitations; mark the active goal complete only after all required work is done.

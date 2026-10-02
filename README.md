@@ -1,6 +1,6 @@
 # Chores
 
-A simpler companion to ForkBasket for sharing the work at home. Two adults record their own chores, compare a rolling points balance, and alternate bedtime duties with fair two-night swaps.
+A simple app for sharing the work at home. Two adults record their own chores, compare a rolling points balance, and alternate bedtime duties with fair two-night swaps.
 
 Live at **https://chores.fruitiex.org** through the homelab's private HTTPS gateway. Connect to the home network or VPN to use it. First launch walks you through household names, both accounts, and the bedtime starting night; no setup token is needed. Save each account's recovery code in its password manager.
 
