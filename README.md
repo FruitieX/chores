@@ -44,4 +44,4 @@ The Nix container serves frontend and API on port 8080 as UID/GID 10001. Persist
 
 [Deployment and recovery](docs/DEPLOYMENT.md) documents homelab manifests, publishing, backups and upgrades. [The plan](docs/PLAN.md) records the user requirements and completion checks.
 
-DM Sans and Fraunces are locally bundled from Google Fonts under their SIL Open Font Licenses in `public/fonts/`. Icons are Lucide (ISC license). The house/check app icon is original SVG artwork in `public/icon.svg`; `scripts/make-icons.mjs` renders the install icons.
+DM Sans is locally bundled from Google Fonts under its SIL Open Font License in `public/fonts/`. Icons are Lucide (ISC license). The app icon depicts two checklist cards, drawn as original SVG artwork in `public/icon.svg`; `scripts/make-icons.mjs` renders the install icons.

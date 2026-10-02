@@ -62,6 +62,12 @@ async function post(page, path, body) {
     { path, body },
   );
 }
+async function capture(page, path) {
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.mouse.move(0, 0);
+  await page.locator(".toast").waitFor({ state: "hidden" });
+  await page.screenshot({ path, fullPage: true });
+}
 async function record(page, name) {
   await page
     .getByRole("button", { name: new RegExp(name) })
@@ -100,12 +106,12 @@ try {
   await p.getByRole("button", { name: "Continue" }).click();
   await p.getByRole("button", { name: "Create our household" }).click();
   await p.getByRole("button", { name: "I’ve saved the codes" }).click();
-  await p.getByRole("heading", { name: "The everyday, shared." }).waitFor();
+  await p.getByRole("heading", { name: "Share the everyday." }).waitFor();
   await q.goto(origin);
   await q.getByLabel("Email", { exact: true }).fill("sam@example.test");
   await q.getByLabel("Password", { exact: true }).fill("sam-test-password");
   await q.getByRole("button", { name: "Sign in", exact: true }).click();
-  await q.getByRole("heading", { name: "The everyday, shared." }).waitFor();
+  await q.getByRole("heading", { name: "Share the everyday." }).waitFor();
   await record(p, "Run dishwasher");
   await record(q, "Hang laundry to dry");
   await eventually(async () => {
@@ -121,14 +127,8 @@ try {
     ),
   );
   await mkdir("test-results", { recursive: true });
-  await p.screenshot({
-    path: "test-results/desktop-chores.png",
-    fullPage: true,
-  });
-  await q.screenshot({
-    path: "test-results/mobile-chores.png",
-    fullPage: true,
-  });
+  await capture(p, "test-results/desktop-chores.png");
+  await capture(q, "test-results/mobile-chores.png");
   // Historical credits must survive point edits and archiving.
   await p.evaluate(() => window.scrollTo(0, 500));
   await p
@@ -238,10 +238,7 @@ try {
     .locator(".night-selection")
     .getByText(/Now choose a Sam night/)
     .waitFor();
-  await p.screenshot({
-    path: "test-results/desktop-calendar-selection.png",
-    fullPage: true,
-  });
+  await capture(p, "test-results/desktop-calendar-selection.png");
   await pickDay(p, add(today, 1));
   await p
     .getByRole("dialog")
@@ -258,14 +255,8 @@ try {
   );
   await dayButton(q, today).locator("svg").waitFor();
   await q.getByRole("button", { name: /Undo swap/ }).waitFor();
-  await p.screenshot({
-    path: "test-results/desktop-calendar.png",
-    fullPage: true,
-  });
-  await q.screenshot({
-    path: "test-results/mobile-calendar.png",
-    fullPage: true,
-  });
+  await capture(p, "test-results/desktop-calendar.png");
+  await capture(q, "test-results/mobile-calendar.png");
   await q.getByRole("button", { name: /Undo swap/ }).click();
   await eventually(async () =>
     assert.deepEqual((await state(p)).household.overrides, {}),
@@ -290,10 +281,7 @@ try {
     .getByRole("dialog")
     .getByLabel("First night belongs to")
     .selectOption("b");
-  await p.screenshot({
-    path: "test-results/desktop-new-pattern.png",
-    fullPage: true,
-  });
+  await capture(p, "test-results/desktop-new-pattern.png");
   await p
     .getByRole("dialog")
     .getByRole("button", { name: "Start new pattern" })
@@ -317,10 +305,7 @@ try {
     .waitFor();
   await q.getByRole("button", { name: "New starting date" }).click();
   await q.getByRole("dialog").getByLabel("Starting date").fill(add(today, 3));
-  await q.screenshot({
-    path: "test-results/mobile-new-pattern.png",
-    fullPage: true,
-  });
+  await capture(q, "test-results/mobile-new-pattern.png");
   await q
     .getByRole("dialog")
     .getByRole("button", { name: "Cancel", exact: true })
@@ -527,10 +512,7 @@ try {
   }
   await p.goto(`${origin}/#history`);
   await p.getByText(/Legacy bedtime, excluded from balance/).waitFor();
-  await p.screenshot({
-    path: "test-results/desktop-legacy-history.png",
-    fullPage: true,
-  });
+  await capture(p, "test-results/desktop-legacy-history.png");
   s = await state(p);
   assert.equal(
     (await post(p, "/restore", { ...backup, revision: s.household.revision }))
@@ -564,14 +546,8 @@ try {
   }
   await p.setViewportSize({ width: 1440, height: 1000 });
   await p.goto(`${origin}/#settings`);
-  await p.screenshot({
-    path: "test-results/desktop-settings.png",
-    fullPage: true,
-  });
-  await q.screenshot({
-    path: "test-results/mobile-settings.png",
-    fullPage: true,
-  });
+  await capture(p, "test-results/desktop-settings.png");
+  await capture(q, "test-results/mobile-settings.png");
   await b.setOffline(true);
   await q.goto(`${origin}/#home`).catch(() => {});
   await q

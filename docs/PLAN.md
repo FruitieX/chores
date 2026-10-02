@@ -8,7 +8,7 @@ The user authorized building, publishing to a private repository, and deploying 
 
 ## Agreed product requirements
 
-- A simple chores sharing app with a warm cream and forest green design, friendly serif headings, and large mobile controls.
+- A simple chores sharing app with its own blue and amber identity, navy navigation, bold sans-serif headings, a checklist app icon, and large mobile controls.
 - Exactly two adults, with separate logins. Names, account details, bedtime starting date and first adult are entered during first-time setup.
 - **No setup token.** First launch configures the household directly. Both accounts are created together, then each person signs in independently.
 - Configurable chore list and configurable point values in settings.
@@ -21,7 +21,7 @@ The user authorized building, publishing to a private repository, and deploying 
 
 ## Implementation decisions
 
-- React, TypeScript and Vite frontend; Lucide icons; Radix accessible dialogs. Locally bundle DM Sans and Fraunces fonts with license files.
+- React, TypeScript and Vite frontend; Lucide icons; Radix accessible dialogs. Locally bundle DM Sans with its license file.
 - Rust, Tokio and Axum backend with SQLite. One non-root process serves the API and compiled frontend in a reproducible Nix-built container.
 - Exactly two stable profile identities. Each completion is attributed to the signed-in account, rather than a profile picker.
 - Passwords use Argon2. Sessions use HttpOnly, SameSite cookies and Secure cookies under HTTPS. Same-origin writes are enforced. Recovery codes are displayed once at setup and rotate on recovery/password changes.
@@ -112,3 +112,14 @@ The update is deployed and verified:
 - Homelab commit: `bbe26a39c625cc3ebadbf3d31926d10f96ddd31e`. Flux Ready/Healthy, one ready replica, persistent claim Bound.
 - Private pre-upgrade and post-upgrade full backups pass integrity checks. Comparing them confirms schema 2, unchanged accounts and sessions, unchanged completion snapshots and household settings, and preserved existing paired swaps. Backup files stay outside Git.
 - Live HTTPS browser verification loaded the current frontend and service worker, checked mobile layout and unauthenticated API privacy, and found no page errors. It made zero POST requests. Private readiness returns 200; public gateway returns 404.
+
+## Distinct visual identity — 2026-10-02
+
+The user requested a distinct look and feel so Chores is recognizable among their other apps.
+
+- [x] Give Chores blue actions, amber/blue adult colors, white cards and navy navigation.
+- [x] Use bold sans-serif headings and a recognizable icon showing two checklist cards, including browser and installed app icons.
+- [x] Make completed-chore recording clearer with checkmark affordances and responsive card feedback; keep the existing flows and data rules.
+- [x] Verify Rust/frontend checks, production browser flows, mobile/desktop screenshots and the production container.
+  - All 17 Rust tests, formatting and Clippy pass; frontend type checking, formatting and production build pass. Two-account browser flows pass at 360, 390, 768 and 1440 px. Home, calendar, settings and dialog screenshots were inspected. Container persistence, idempotency and private backup/restore checks pass.
+- [ ] Push the private source, pass CI, deploy a pinned image and verify private HTTPS.

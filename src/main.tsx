@@ -64,9 +64,9 @@ function Brand() {
   return (
     <span className="brand">
       <span className="brand-mark">
-        <House size={24} />
+        <img src="/icon.svg" width="38" height="38" alt="" />
       </span>
-      Chores<span className="brand-dot">.</span>
+      Chores
     </span>
   );
 }
@@ -966,11 +966,11 @@ function Home({ h, person, today, mutate, disabled }: Shared) {
       <div className="page-heading">
         <div>
           <span className="eyebrow">{h.settings.householdName}</span>
-          <h1>The everyday, shared.</h1>
+          <h1>Share the everyday.</h1>
           <p>Hi {personName(h, person)}. What have you taken care of?</p>
         </div>
         <span className="heading-decoration">
-          <Sparkles size={34} />
+          <CheckCheck size={34} />
         </span>
       </div>
       <div className="overview">
@@ -1001,7 +1001,7 @@ function Home({ h, person, today, mutate, disabled }: Shared) {
         </section>
       </div>
       <div className="section-heading">
-        <h2>One less thing to do</h2>
+        <h2>Choose a chore</h2>
         <span className="muted">Record a completed chore</span>
       </div>
       <div className="chips" aria-label="Chore categories">
@@ -1053,8 +1053,8 @@ function Home({ h, person, today, mutate, disabled }: Shared) {
                       ? `Last done ${formatDate(last.date, true)}`
                       : c.category}
               </span>
-              <span className="tile-plus">
-                <Plus size={17} />
+              <span className="tile-action">
+                <Check size={17} />
               </span>
             </button>
           );
