@@ -8,6 +8,7 @@ fn server() -> Server {
         )),
         origin: Arc::new("http://localhost".into()),
         limits: Arc::new(Mutex::new(HashMap::new())),
+        csp: Arc::new(content_security_policy(None)),
     }
 }
 fn settings() -> Settings {
@@ -421,4 +422,16 @@ fn database_upgrade_preserves_accounts_credits_and_calendar_once() {
         );
     }
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn csp_allows_only_a_configured_feedback_hub() {
+    let plain = content_security_policy(None);
+    assert!(plain.contains("script-src 'self';"));
+    assert!(plain.contains("connect-src 'self';"));
+    let hub = content_security_policy(Some("https://feedback.example.org"));
+    assert!(hub.contains(&format!(
+        "script-src 'self' https://feedback.example.org {FEEDBACK_EARLY_PATCH_HASH};"
+    )));
+    assert!(hub.contains("connect-src 'self' https://feedback.example.org;"));
 }

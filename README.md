@@ -40,7 +40,7 @@ Browser checks start an isolated production server and temporary database, creat
 
 ## Deployment
 
-The Nix container serves frontend and API on port 8080 as UID/GID 10001. Persist `/data`, and set `CHORES_ORIGIN` to the exact HTTPS address. Keep one replica. For NFS, use `CHORES_SQLITE_JOURNAL_MODE=DELETE`; local/block storage defaults to WAL.
+The Nix container serves frontend and API on port 8080 as UID/GID 10001. Persist `/data`, and set `CHORES_ORIGIN` to the exact HTTPS address. Keep one replica. For NFS, use `CHORES_SQLITE_JOURNAL_MODE=DELETE`; local/block storage defaults to WAL. If a gateway injects a feedback widget, set `CHORES_FEEDBACK_HUB` to its origin (e.g. `https://feedback.fruitiex.org`) so the Content-Security-Policy allows it.
 
 [Deployment and recovery](docs/DEPLOYMENT.md) documents homelab manifests, publishing, backups and upgrades. [The plan](docs/PLAN.md) records the user requirements and completion checks.
 

@@ -7,7 +7,7 @@ use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_ha
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Request, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -32,6 +32,25 @@ struct Server {
     db: Arc<Mutex<Connection>>,
     origin: Arc<String>,
     limits: Arc<Mutex<HashMap<String, (u32, i64)>>>,
+    csp: Arc<String>,
+}
+
+/// Hash of the inline WebGL patch the homelab gateway injects together with the
+/// feedback widget (`EARLY_PATCH` in homelab's `apps/feedback-hub/widget-injection.lua`).
+const FEEDBACK_EARLY_PATCH_HASH: &str = "'sha256-7Arh+CajVFiRR3s4fb+pZF1SzlEm2jLxki4eJ/fC7Ig='";
+
+/// The page's CSP; `feedback_hub` is the origin of an injected feedback widget, if any.
+fn content_security_policy(feedback_hub: Option<&str>) -> String {
+    let (script, connect) = match feedback_hub {
+        Some(hub) => (
+            format!("'self' {hub} {FEEDBACK_EARLY_PATCH_HASH}"),
+            format!("'self' {hub}"),
+        ),
+        None => ("'self'".into(), "'self'".into()),
+    };
+    format!(
+        "default-src 'self'; script-src {script}; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src {connect}; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+    )
 }
 impl Server {
     fn conn(&self) -> Result<MutexGuard<'_, Connection>> {
@@ -233,7 +252,9 @@ async fn guard(State(server): State<Server>, request: Request, next: Next) -> Re
     headers.insert("referrer-policy", "same-origin".parse().unwrap());
     headers.insert("x-frame-options", "DENY".parse().unwrap());
     headers.insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
-    headers.insert("content-security-policy","default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'".parse().unwrap());
+    if let Ok(csp) = HeaderValue::from_str(&server.csp) {
+        headers.insert("content-security-policy", csp);
+    }
     response
 }
 async fn status(State(server): State<Server>, headers: HeaderMap) -> Result<Json<Value>> {
@@ -636,10 +657,21 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     if !(origin.starts_with("http://") || origin.starts_with("https://")) {
         return Err("CHORES_ORIGIN must be an HTTP(S) origin".into());
     }
+    let feedback_hub = std::env::var("CHORES_FEEDBACK_HUB")
+        .ok()
+        .map(|hub| hub.trim_end_matches('/').to_string())
+        .filter(|hub| !hub.is_empty());
+    if let Some(hub) = &feedback_hub
+        && (!(hub.starts_with("http://") || hub.starts_with("https://"))
+            || hub.contains([' ', ';', '\'', '"']))
+    {
+        return Err("CHORES_FEEDBACK_HUB must be an HTTP(S) origin".into());
+    }
     let server = Server {
         db: Arc::new(Mutex::new(db)),
         origin: Arc::new(origin),
         limits: Arc::new(Mutex::new(HashMap::new())),
+        csp: Arc::new(content_security_policy(feedback_hub.as_deref())),
     };
     let bind = std::env::var("CHORES_BIND").unwrap_or("127.0.0.1:3002".into());
     let listener = tokio::net::TcpListener::bind(&bind).await?;
