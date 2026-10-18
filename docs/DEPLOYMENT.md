@@ -1,6 +1,6 @@
 # Deployment and recovery
 
-Chores uses a private GitHub repository and GHCR image, a homelab Flux deployment, an NFS-backed SQLite database, and the private Envoy HTTPS gateway at **https://chores.fruitiex.org**. Live manifests are in `~/homelab/apps/chores`; reusable copies are under `deploy/kubernetes/`.
+Chores uses a private GitHub repository and GHCR image, a homelab Flux deployment, an NFS-backed SQLite database, and the private Envoy HTTPS gateway at **https://chores.fruitiex.org**. Live manifests are in `~/projects/homelab/apps/chores`; reusable copies are under `deploy/kubernetes/`.
 
 ## First launch
 
@@ -26,8 +26,8 @@ The NFS claim `chores-data-nfs` uses `nfs-csi`. It has Flux pruning disabled to 
 Health: `/api/health` reports process liveness; `/api/ready` checks the database. `/api/auth/status` exposes whether first launch has been completed, without revealing household details. Authenticated household data is not cached by the service worker.
 
 ```sh
-KUBECONFIG=~/homelab/kubeconfig nix develop --command kubectl get kustomization chores -n flux-system
-KUBECONFIG=~/homelab/kubeconfig nix develop --command kubectl rollout status deployment/chores
+KUBECONFIG=~/projects/homelab/kubeconfig nix develop --command kubectl get kustomization chores -n flux-system
+KUBECONFIG=~/projects/homelab/kubeconfig nix develop --command kubectl rollout status deployment/chores
 ```
 
 ## Backups
