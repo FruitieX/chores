@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { createServer } from "node:net";
+import { createServer as createHttpServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "playwright";
 const socket = createServer();
@@ -13,22 +14,95 @@ await new Promise((r) => socket.close(r));
 const origin = `http://127.0.0.1:${port}`;
 const data = await mkdtemp(`${tmpdir()}/chores-ui-`);
 let logs = "";
-const server = spawn(
-  process.env.CHORES_TEST_BINARY ?? "backend/target/debug/chores-api",
-  [],
-  {
-    env: {
-      ...process.env,
-      CHORES_BIND: `127.0.0.1:${port}`,
-      CHORES_ORIGIN: origin,
-      CHORES_DATA_DIR: data,
-      CHORES_STATIC_DIR: resolve("dist"),
+function start(extraEnv = {}) {
+  const child = spawn(
+    process.env.CHORES_TEST_BINARY ?? "backend/target/debug/chores-api",
+    [],
+    {
+      env: {
+        ...process.env,
+        CHORES_BIND: `127.0.0.1:${port}`,
+        CHORES_ORIGIN: origin,
+        CHORES_DATA_DIR: data,
+        CHORES_STATIC_DIR: resolve("dist"),
+        ...extraEnv,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
     },
-    stdio: ["ignore", "pipe", "pipe"],
-  },
-);
-server.stdout.on("data", (d) => (logs += d));
-server.stderr.on("data", (d) => (logs += d));
+  );
+  child.stdout.on("data", (d) => (logs += d));
+  child.stderr.on("data", (d) => (logs += d));
+  return child;
+}
+let server = start();
+// A minimal OpenID Connect provider standing in for Pocket ID.
+let idpUser = null;
+const codes = new Map();
+const b64url = (s) => Buffer.from(s).toString("base64url");
+const idp = createHttpServer(async (req, res) => {
+  const url = new URL(req.url, idpOrigin);
+  const json = (body) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(body));
+  };
+  if (url.pathname === "/.well-known/openid-configuration")
+    return json({
+      issuer: idpOrigin,
+      authorization_endpoint: `${idpOrigin}/authorize`,
+      token_endpoint: `${idpOrigin}/token`,
+    });
+  if (url.pathname === "/authorize") {
+    assert.equal(url.searchParams.get("client_id"), "chores");
+    assert.equal(url.searchParams.get("code_challenge_method"), "S256");
+    const code = crypto.randomUUID();
+    codes.set(code, {
+      user: idpUser,
+      nonce: url.searchParams.get("nonce"),
+      challenge: url.searchParams.get("code_challenge"),
+    });
+    const back = new URL(url.searchParams.get("redirect_uri"));
+    back.searchParams.set("code", code);
+    back.searchParams.set("state", url.searchParams.get("state"));
+    res.writeHead(302, { location: back.href });
+    return res.end();
+  }
+  if (url.pathname === "/token" && req.method === "POST") {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    const form = new URLSearchParams(body);
+    const grant = codes.get(form.get("code"));
+    codes.delete(form.get("code"));
+    const verifier = form.get("code_verifier") ?? "";
+    const challenge = (await import("node:crypto"))
+      .createHash("sha256")
+      .update(verifier)
+      .digest("base64url");
+    if (
+      !grant ||
+      form.get("client_secret") !== "test-secret" ||
+      challenge !== grant.challenge
+    ) {
+      res.writeHead(400);
+      return res.end();
+    }
+    const claims = {
+      iss: idpOrigin,
+      aud: "chores",
+      exp: Math.floor(Date.now() / 1000) + 60,
+      nonce: grant.nonce,
+      ...grant.user,
+    };
+    return json({
+      id_token: `${b64url('{"alg":"none"}')}.${b64url(JSON.stringify(claims))}.`,
+      access_token: "a",
+      token_type: "Bearer",
+    });
+  }
+  res.writeHead(404);
+  res.end();
+});
+await new Promise((r) => idp.listen(0, "127.0.0.1", r));
+const idpOrigin = `http://127.0.0.1:${idp.address().port}`;
 let browser;
 async function eventually(fn) {
   let error;
@@ -578,9 +652,67 @@ try {
       true,
     ),
   );
+  // Passkey sign-in through the provider, with password sign-in as a fallback.
+  server.kill("SIGTERM");
+  await new Promise((r) => server.once("exit", r));
+  server = start({
+    CHORES_OIDC_ISSUER: idpOrigin,
+    CHORES_OIDC_CLIENT_ID: "chores",
+    CHORES_OIDC_CLIENT_SECRET: "test-secret",
+    CHORES_OIDC_ALLOWED_GROUPS: "family",
+    CHORES_OIDC_USER_MAP: "alexuser:a,samuser:sam@example.test",
+  });
+  await eventually(async () =>
+    assert.equal((await fetch(`${origin}/api/ready`)).status, 200),
+  );
+  const c = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const r = await c.newPage();
+  r.on("pageerror", (e) => pageErrors.push(e.message));
+  await r.goto(origin);
+  const passkeyLink = r.getByRole("link", { name: "Sign in with passkey" });
+  await passkeyLink.waitFor();
+  assert.equal(await r.getByLabel("Password", { exact: true }).count(), 0);
+  await capture(r, "test-results/mobile-passkey-login.png");
+  for (const [user, message] of [
+    [
+      { sub: "kid", preferred_username: "kid", groups: ["kids"] },
+      /isn’t allowed/,
+    ],
+    [
+      { sub: "guest", preferred_username: "guest", groups: ["family"] },
+      /isn’t linked/,
+    ],
+  ]) {
+    idpUser = user;
+    await passkeyLink.click();
+    await r.getByRole("alert").filter({ hasText: message }).waitFor();
+    assert.equal(new URL(r.url()).search, "");
+  }
+  idpUser = {
+    sub: "alex-sub",
+    preferred_username: "AlexUser",
+    groups: ["family"],
+  };
+  await passkeyLink.click();
+  await r.getByRole("heading", { name: "Share the everyday." }).waitFor();
+  assert.equal((await state(r)).person, "a");
+  const session = (await c.cookies()).find((k) => k.name === "chores_session");
+  assert.ok(session.expires > Date.now() / 1000 + 364 * 86400);
+  const d = await browser.newContext({
+    viewport: { width: 1440, height: 1000 },
+  });
+  const t = await d.newPage();
+  t.on("pageerror", (e) => pageErrors.push(e.message));
+  await t.goto(origin);
+  await t.getByRole("button", { name: "Use password instead" }).click();
+  await t.getByLabel("Email", { exact: true }).fill("sam@example.test");
+  await t.getByLabel("Password", { exact: true }).fill("sam-test-password");
+  await t.getByRole("button", { name: "Sign in", exact: true }).click();
+  await t.getByRole("heading", { name: "Share the everyday." }).waitFor();
+  assert.equal((await state(t)).person, "b");
   assert.deepEqual(pageErrors, []);
   console.log(
-    "Production browser checks passed: setup, two accounts, points/history, settings/archive, bedtime swaps/undo/restarts, retry, backup/restore, PWA, reconnect and four responsive widths.",
+    "Production browser checks passed: setup, two accounts, points/history, settings/archive, bedtime swaps/undo/restarts, retry, backup/restore, PWA, reconnect, four responsive widths and passkey sign-in with password fallback.",
   );
 } catch (e) {
   console.error(logs);
@@ -588,5 +720,6 @@ try {
 } finally {
   if (browser) await browser.close();
   server.kill("SIGTERM");
+  idp.close();
   await rm(data, { recursive: true, force: true });
 }

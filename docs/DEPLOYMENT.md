@@ -45,7 +45,7 @@ Keep backups outside the PVC and verify restoration periodically. A live SQLite 
 
 ## Recovery and upgrades
 
-Before upgrades, take a database backup and pin the new image digest. The bedtime calendar update migrates SQLite from schema 1 to schema 2 transactionally; rolling back to the original release requires restoring a schema 1 database backup. Flux replaces the single pod; application schema checks refuse newer database formats on older binaries. Close and reopen installed app windows after upgrading so the new service worker can activate.
+Before upgrades, take a database backup and pin the new image digest. The bedtime calendar update migrates SQLite from schema 1 to schema 2 transactionally; rolling back to the original release requires restoring a schema 1 database backup. Passkey sign-in adds schema 3 (linked provider identities and renewing sessions); rolling back past it likewise requires a schema 2 backup. Flux replaces the single pod; application schema checks refuse newer database formats on older binaries. Close and reopen installed app windows after upgrading so the new service worker can activate.
 
 For full restoration, suspend the Chores Flux Kustomization, scale its deployment to zero, restore `chores.sqlite3` from a consistent backup with owner UID/GID 10001, and remove obsolete WAL/SHM files while the app is stopped. Restart the deployment, check readiness and both logins, then resume Flux. Never replace the database under a running server.
 

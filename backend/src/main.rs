@@ -1,12 +1,13 @@
 mod bedtime;
 mod domain;
 mod error;
+mod oidc;
 #[cfg(test)]
 mod tests;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Request, State},
+    extract::{DefaultBodyLimit, Query, Request, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -33,7 +34,13 @@ struct Server {
     origin: Arc<String>,
     limits: Arc<Mutex<HashMap<String, (u32, i64)>>>,
     csp: Arc<String>,
+    oidc: Option<Arc<oidc::Oidc>>,
 }
+
+/// Sessions from a password sign-in last 90 days.
+const PASSWORD_SESSION_SECONDS: i64 = 90 * 86400;
+/// Sessions from a provider sign-in last 365 days and renew themselves while in use.
+const SLIDING_SESSION_SECONDS: i64 = 365 * 86400;
 
 /// Hash of the inline WebGL patch the homelab gateway injects together with the
 /// feedback widget (`EARLY_PATCH` in homelab's `apps/feedback-hub/widget-injection.lua`).
@@ -136,7 +143,7 @@ fn initialize(path: &std::path::Path) -> Result<Connection> {
     db.pragma_update(None, "synchronous", "EXTRA")?;
     db.pragma_update(None, "foreign_keys", true)?;
     let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-    if version > 2 {
+    if version > 3 {
         return Err(ApiError::bad("This database needs a newer Chores release."));
     }
     db.execute_batch("BEGIN IMMEDIATE;
@@ -158,6 +165,22 @@ fn initialize(path: &std::path::Path) -> Result<Connection> {
         tx.pragma_update(None, "user_version", 2)?;
         tx.commit()?;
     }
+    if version < 3 {
+        let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let has_sliding: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('sessions') WHERE name='sliding')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !has_sliding {
+            tx.execute_batch(
+                "ALTER TABLE sessions ADD COLUMN sliding INTEGER NOT NULL DEFAULT 0;",
+            )?;
+        }
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS oidc_identities(issuer TEXT NOT NULL, sub TEXT NOT NULL, person TEXT NOT NULL UNIQUE REFERENCES users(id), PRIMARY KEY(issuer, sub));")?;
+        tx.pragma_update(None, "user_version", 3)?;
+        tx.commit()?;
+    }
     Ok(db)
 }
 fn read(db: &Connection) -> Result<Household> {
@@ -171,26 +194,84 @@ fn write(db: &Connection, h: &Household) -> Result<()> {
     )?;
     Ok(())
 }
-fn actor(server: &Server, headers: &HeaderMap) -> Result<String> {
-    let raw = headers
+fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers
         .get(header::COOKIE)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| {
             v.split(';')
                 .map(str::trim)
-                .find_map(|c| c.strip_prefix("chores_session="))
+                .find_map(|c| c.strip_prefix(name)?.strip_prefix('='))
         })
+}
+fn secure(server: &Server) -> &'static str {
+    if server.origin.starts_with("https://") {
+        "; Secure"
+    } else {
+        ""
+    }
+}
+fn session_cookie(server: &Server, raw: &str, max_age: i64) -> Result<HeaderValue> {
+    format!(
+        "chores_session={raw}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}{}",
+        secure(server)
+    )
+    .parse()
+    .map_err(ApiError::internal)
+}
+/// The signed-in person, and a renewed cookie when a sliding session was extended.
+fn session(server: &Server, headers: &HeaderMap) -> Result<(String, Option<HeaderValue>)> {
+    let raw = cookie(headers, "chores_session")
         .filter(|s| s.len() == 64)
         .ok_or_else(ApiError::unauthorized)?;
-    server
-        .conn()?
+    let now = Utc::now().timestamp();
+    let db = server.conn()?;
+    let (person, expires, sliding): (String, i64, bool) = db
         .query_row(
-            "SELECT person FROM sessions WHERE hash=?1 AND expires>?2",
-            params![digest(raw), Utc::now().timestamp()],
-            |r| r.get(0),
+            "SELECT person,expires,sliding FROM sessions WHERE hash=?1 AND expires>?2",
+            params![digest(raw), now],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?
-        .ok_or_else(ApiError::unauthorized)
+        .ok_or_else(ApiError::unauthorized)?;
+    // Renew at most daily, so ordinary polling does not write on every request.
+    if sliding && expires < now + SLIDING_SESSION_SECONDS - 86400 {
+        db.execute(
+            "UPDATE sessions SET expires=?1 WHERE hash=?2",
+            params![now + SLIDING_SESSION_SECONDS, digest(raw)],
+        )?;
+        return Ok((
+            person,
+            Some(session_cookie(server, raw, SLIDING_SESSION_SECONDS)?),
+        ));
+    }
+    Ok((person, None))
+}
+fn actor(server: &Server, headers: &HeaderMap) -> Result<String> {
+    session(server, headers).map(|(person, _)| person)
+}
+/// Stores a new session for `person` and returns the cookie that carries it.
+fn create_session(
+    server: &Server,
+    db: &Connection,
+    person: &str,
+    sliding: bool,
+) -> Result<HeaderMap> {
+    let raw = token();
+    let now = Utc::now().timestamp();
+    let lifetime = if sliding {
+        SLIDING_SESSION_SECONDS
+    } else {
+        PASSWORD_SESSION_SECONDS
+    };
+    db.execute("DELETE FROM sessions WHERE expires<=?1", [now])?;
+    db.execute(
+        "INSERT INTO sessions(hash,person,expires,sliding) VALUES(?1,?2,?3,?4)",
+        params![digest(&raw), person, now + lifetime, sliding],
+    )?;
+    let mut headers = HeaderMap::new();
+    headers.insert(header::SET_COOKIE, session_cookie(server, &raw, lifetime)?);
+    Ok(headers)
 }
 fn sign_in(
     server: &Server,
@@ -198,8 +279,6 @@ fn sign_in(
     recovery: Value,
     expected_password: &str,
 ) -> Result<(HeaderMap, Json<Value>)> {
-    let raw = token();
-    let now = Utc::now().timestamp();
     let db = server.conn()?;
     let current: String =
         db.query_row("SELECT password FROM users WHERE id=?1", [person], |r| {
@@ -208,25 +287,7 @@ fn sign_in(
     if current != expected_password {
         return Err(ApiError::unauthorized());
     }
-    db.execute("DELETE FROM sessions WHERE expires<=?1", [now])?;
-    db.execute(
-        "INSERT INTO sessions VALUES(?1,?2,?3)",
-        params![digest(&raw), person, now + 90 * 86400],
-    )?;
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::SET_COOKIE,
-        format!(
-            "chores_session={raw}; Path=/; HttpOnly; SameSite=Strict; Max-Age=7776000{}",
-            if server.origin.starts_with("https://") {
-                "; Secure"
-            } else {
-                ""
-            }
-        )
-        .parse()
-        .map_err(ApiError::internal)?,
-    );
+    let headers = create_session(server, &db, person, false)?;
     Ok((
         headers,
         Json(json!({"person":person,"recoveryCodes":recovery})),
@@ -257,15 +318,182 @@ async fn guard(State(server): State<Server>, request: Request, next: Next) -> Re
     }
     response
 }
-async fn status(State(server): State<Server>, headers: HeaderMap) -> Result<Json<Value>> {
+async fn status(
+    State(server): State<Server>,
+    headers: HeaderMap,
+) -> Result<(HeaderMap, Json<Value>)> {
     let setup = server
         .conn()?
         .query_row("SELECT EXISTS(SELECT 1 FROM users)", [], |r| {
             r.get::<_, bool>(0)
         })?;
-    Ok(Json(
-        json!({"initialized":setup,"person":actor(&server,&headers).ok()}),
+    let (person, renewed) = match session(&server, &headers) {
+        Ok((person, renewed)) => (Some(person), renewed),
+        Err(_) => (None, None),
+    };
+    let mut response = HeaderMap::new();
+    if let Some(cookie) = renewed {
+        response.insert(header::SET_COOKIE, cookie);
+    }
+    Ok((
+        response,
+        Json(json!({"initialized":setup,"person":person,"oidc":server.oidc.is_some()})),
     ))
+}
+fn redirect(location: &str, cookies: Vec<HeaderValue>) -> Response {
+    let mut response = StatusCode::SEE_OTHER.into_response();
+    let headers = response.headers_mut();
+    if let Ok(location) = HeaderValue::from_str(location) {
+        headers.insert(header::LOCATION, location);
+    }
+    for cookie in cookies {
+        headers.append(header::SET_COOKIE, cookie);
+    }
+    response
+}
+fn clear_state_cookie(server: &Server) -> Vec<HeaderValue> {
+    HeaderValue::from_str(&format!(
+        "{}=; Path=/auth; HttpOnly; SameSite=Lax; Max-Age=0{}",
+        oidc::STATE_COOKIE,
+        secure(server)
+    ))
+    .into_iter()
+    .collect()
+}
+fn signin_refused(server: &Server, code: &str, detail: impl std::fmt::Display) -> Response {
+    tracing::warn!("provider sign-in refused ({code}): {detail}");
+    redirect(&format!("/?signin={code}"), clear_state_cookie(server))
+}
+async fn oidc_login(State(server): State<Server>) -> Response {
+    let Some(provider) = server.oidc.clone() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match tokio::task::spawn_blocking(move || provider.start()).await {
+        Ok(Ok((url, state))) => {
+            let cookie = HeaderValue::from_str(&format!(
+                "{}={state}; Path=/auth; HttpOnly; SameSite=Lax; Max-Age={}{}",
+                oidc::STATE_COOKIE,
+                oidc::STATE_SECONDS,
+                secure(&server)
+            ));
+            redirect(&url, cookie.into_iter().collect())
+        }
+        Ok(Err(e)) => signin_refused(&server, e.code(), e),
+        Err(e) => signin_refused(&server, "failed", e),
+    }
+}
+#[derive(Deserialize)]
+struct Callback {
+    code: Option<String>,
+    state: Option<String>,
+    error: Option<String>,
+}
+/// Finds the local account for a provider identity, linking it on first sign-in
+/// through `CHORES_OIDC_USER_MAP`. Returns a refusal code on failure.
+fn link_identity(
+    db: &mut Connection,
+    config: &oidc::OidcConfig,
+    identity: &oidc::Identity,
+) -> std::result::Result<String, (&'static str, String)> {
+    let internal = |e: rusqlite::Error| ("failed", e.to_string());
+    let tx = db
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(internal)?;
+    if let Some(person) = tx
+        .query_row(
+            "SELECT person FROM oidc_identities WHERE issuer=?1 AND sub=?2",
+            params![identity.issuer, identity.sub],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(internal)?
+    {
+        return Ok(person);
+    }
+    let username = identity.username.as_deref().unwrap_or("").to_lowercase();
+    let Some(account) = config.user_map.get(&username) else {
+        return Err((
+            "not-linked",
+            format!("{username:?} ({}) has no Chores account", identity.sub),
+        ));
+    };
+    let person = tx
+        .query_row(
+            "SELECT id FROM users WHERE id=?1 OR email=?1",
+            [account],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(internal)?
+        .ok_or_else(|| {
+            (
+                "not-linked",
+                format!("CHORES_OIDC_USER_MAP names unknown account {account:?}"),
+            )
+        })?;
+    if tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM oidc_identities WHERE person=?1)",
+            [&person],
+            |r| r.get::<_, bool>(0),
+        )
+        .map_err(internal)?
+    {
+        return Err((
+            "not-linked",
+            format!("account {person} is already linked to another identity"),
+        ));
+    }
+    tx.execute(
+        "INSERT INTO oidc_identities(issuer,sub,person) VALUES(?1,?2,?3)",
+        params![identity.issuer, identity.sub, person],
+    )
+    .map_err(internal)?;
+    tx.commit().map_err(internal)?;
+    tracing::info!("linked {username} ({}) to account {person}", identity.sub);
+    Ok(person)
+}
+async fn oidc_callback(
+    State(server): State<Server>,
+    headers: HeaderMap,
+    Query(query): Query<Callback>,
+) -> Response {
+    let Some(provider) = server.oidc.clone() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if let Some(error) = query.error {
+        return signin_refused(&server, "failed", format!("provider returned {error}"));
+    }
+    let (Some(state), Some(code)) = (query.state, query.code) else {
+        return signin_refused(&server, "failed", "callback without state or code");
+    };
+    let login = match provider.take_login(&state, cookie(&headers, oidc::STATE_COOKIE)) {
+        Ok(login) => login,
+        Err(e) => return signin_refused(&server, e.code(), e),
+    };
+    let identity = match tokio::task::spawn_blocking({
+        let provider = provider.clone();
+        move || provider.finish(&login, &code)
+    })
+    .await
+    {
+        Ok(Ok(identity)) => identity,
+        Ok(Err(e)) => return signin_refused(&server, e.code(), e),
+        Err(e) => return signin_refused(&server, "failed", e),
+    };
+    let signed_in = (|| -> std::result::Result<HeaderMap, (&'static str, String)> {
+        let mut db = server.conn().map_err(|e| ("failed", e.1))?;
+        let person = link_identity(&mut db, &provider.config, &identity)?;
+        create_session(&server, &db, &person, true).map_err(|e| ("failed", e.1))
+    })();
+    match signed_in {
+        Ok(session) => {
+            let mut cookies = clear_state_cookie(&server);
+            cookies.extend(session.get_all(header::SET_COOKIE).iter().cloned());
+            redirect("/", cookies)
+        }
+        Err((code, detail)) => signin_refused(&server, code, detail),
+    }
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -360,15 +588,7 @@ async fn logout(
     headers: HeaderMap,
 ) -> Result<(HeaderMap, Json<Value>)> {
     actor(&server, &headers)?;
-    if let Some(raw) = headers
-        .get(header::COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| {
-            v.split(';')
-                .map(str::trim)
-                .find_map(|c| c.strip_prefix("chores_session="))
-        })
-    {
+    if let Some(raw) = cookie(&headers, "chores_session") {
         server
             .conn()?
             .execute("DELETE FROM sessions WHERE hash=?1", [digest(raw)])?;
@@ -611,6 +831,8 @@ fn app(server: Server, static_dir: PathBuf) -> Router {
         .route("/api/auth/recover", post(recover))
         .route("/api/auth/password", post(change_password))
         .route("/api/state", get(state))
+        .route("/auth/login", get(oidc_login))
+        .route("/auth/callback", get(oidc_callback))
         .route("/api/operations", post(mutate))
         .route("/api/backup", get(backup))
         .route("/api/restore", post(restore))
@@ -667,11 +889,16 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     {
         return Err("CHORES_FEEDBACK_HUB must be an HTTP(S) origin".into());
     }
+    let oidc = oidc::OidcConfig::from_env(&origin)?.map(|config| {
+        tracing::info!("provider sign-in enabled through {}", config.issuer);
+        Arc::new(oidc::Oidc::new(config))
+    });
     let server = Server {
         db: Arc::new(Mutex::new(db)),
         origin: Arc::new(origin),
         limits: Arc::new(Mutex::new(HashMap::new())),
         csp: Arc::new(content_security_policy(feedback_hub.as_deref())),
+        oidc,
     };
     let bind = std::env::var("CHORES_BIND").unwrap_or("127.0.0.1:3002".into());
     let listener = tokio::net::TcpListener::bind(&bind).await?;

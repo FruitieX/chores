@@ -42,6 +42,22 @@ Browser checks start an isolated production server and temporary database, creat
 
 The Nix container serves frontend and API on port 8080 as UID/GID 10001. Persist `/data`, and set `CHORES_ORIGIN` to the exact HTTPS address. Keep one replica. For NFS, use `CHORES_SQLITE_JOURNAL_MODE=DELETE`; local/block storage defaults to WAL. If a gateway injects a feedback widget, set `CHORES_FEEDBACK_HUB` to its origin (e.g. `https://feedback.fruitiex.org`) so the Content-Security-Policy allows it.
 
+### Passkey sign-in (OpenID Connect)
+
+Optionally, Chores can sign people in through an OpenID Connect provider such as Pocket ID. Without these variables, only password sign-in exists, as before.
+
+| Variable                     | Meaning                                                                                                                                                                                               |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CHORES_OIDC_ISSUER`         | Provider issuer URL, e.g. `https://id.fruitiex.org`                                                                                                                                                   |
+| `CHORES_OIDC_CLIENT_ID`      | Client id registered at the provider (`chores`)                                                                                                                                                       |
+| `CHORES_OIDC_CLIENT_SECRET`  | Client secret (keep it in a secret)                                                                                                                                                                   |
+| `CHORES_OIDC_ALLOWED_GROUPS` | Comma-separated groups; the `groups` claim must contain one. Empty allows anyone the provider admits.                                                                                                 |
+| `CHORES_OIDC_USER_MAP`       | Comma-separated `provideruser:account` pairs linking provider usernames (`preferred_username`, case-insensitive) to the local accounts, given as `a`/`b` or the account email, e.g. `rasse:a,julle:b` |
+
+The first three must be set together. Register `${CHORES_ORIGIN}/auth/callback` as the redirect URL. With them set, the login screen leads with **Sign in with passkey**; **Use password instead** keeps password sign-in, recovery and the first-launch setup available.
+
+On a person's first provider sign-in, the user map links their provider identity (issuer and `sub`) to the account permanently; later sign-ins use that link even if the username changes. An account links to one identity only, and provider users without a mapping are refused, so no accounts are created. Provider sessions last 365 days and renew themselves while the app is used; password sessions keep their fixed 90 days.
+
 [Deployment and recovery](docs/DEPLOYMENT.md) documents homelab manifests, publishing, backups and upgrades. [The plan](docs/PLAN.md) records the user requirements and completion checks.
 
 DM Sans is locally bundled from Google Fonts under its SIL Open Font License in `public/fonts/`. Icons are Lucide (ISC license). The app icon depicts two checklist cards, drawn as original SVG artwork in `public/icon.svg`; `scripts/make-icons.mjs` renders the install icons.

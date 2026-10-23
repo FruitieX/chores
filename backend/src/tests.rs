@@ -9,6 +9,7 @@ fn server() -> Server {
         origin: Arc::new("http://localhost".into()),
         limits: Arc::new(Mutex::new(HashMap::new())),
         csp: Arc::new(content_security_policy(None)),
+        oidc: None,
     }
 }
 fn settings() -> Settings {
@@ -245,8 +246,11 @@ async fn database_restart_preserves_state_and_sessions() {
             [],
         )
         .unwrap();
-        db.execute("INSERT INTO sessions VALUES('session','a',9999999999)", [])
-            .unwrap();
+        db.execute(
+            "INSERT INTO sessions(hash,person,expires) VALUES('session','a',9999999999)",
+            [],
+        )
+        .unwrap();
     }
     let db = initialize(&path).unwrap();
     assert_eq!(read(&db).unwrap().settings.names[0], "Alex");
@@ -355,7 +359,7 @@ fn database_upgrade_preserves_accounts_credits_and_calendar_once() {
         )
         .unwrap();
         db.execute(
-            "INSERT INTO sessions VALUES('saved-session','a',9999999999)",
+            "INSERT INTO sessions(hash,person,expires) VALUES('saved-session','a',9999999999)",
             [],
         )
         .unwrap();
@@ -418,7 +422,7 @@ fn database_upgrade_preserves_accounts_credits_and_calendar_once() {
         assert_eq!(
             db.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
                 .unwrap(),
-            2
+            3
         );
     }
     std::fs::remove_file(path).unwrap();
@@ -434,4 +438,124 @@ fn csp_allows_only_a_configured_feedback_hub() {
         "script-src 'self' https://feedback.example.org {FEEDBACK_EARLY_PATCH_HASH};"
     )));
     assert!(hub.contains("connect-src 'self' https://feedback.example.org;"));
+}
+
+fn two_accounts(server: &Server) {
+    let db = server.conn().unwrap();
+    db.execute(
+        "INSERT INTO users VALUES('a','alex@example.test','hash','r1'),('b','sam@example.test','hash','r2')",
+        [],
+    )
+    .unwrap();
+}
+fn provider_config() -> oidc::OidcConfig {
+    oidc::OidcConfig {
+        issuer: "https://id.example.org".into(),
+        client_id: "chores".into(),
+        client_secret: "s".into(),
+        redirect_url: "http://localhost/auth/callback".into(),
+        allowed_groups: vec!["family".into()],
+        user_map: oidc::parse_user_map("alexuser:a,samuser:SAM@example.test").unwrap(),
+    }
+}
+fn identity(sub: &str, username: &str) -> oidc::Identity {
+    oidc::Identity {
+        issuer: "https://id.example.org".into(),
+        sub: sub.into(),
+        username: Some(username.into()),
+    }
+}
+#[test]
+fn provider_identities_link_once_through_the_user_map() {
+    let server = server();
+    two_accounts(&server);
+    let config = provider_config();
+    let mut db = server.conn().unwrap();
+    assert_eq!(
+        link_identity(&mut db, &config, &identity("u1", "AlexUser")).unwrap(),
+        "a"
+    );
+    assert_eq!(
+        link_identity(&mut db, &config, &identity("u2", "samuser")).unwrap(),
+        "b"
+    );
+    // Once linked, the identity is found by subject even if the username changes.
+    assert_eq!(
+        link_identity(&mut db, &config, &identity("u1", "renamed")).unwrap(),
+        "a"
+    );
+    // Unmapped users and a second identity for a linked account are refused.
+    assert_eq!(
+        link_identity(&mut db, &config, &identity("u3", "kid"))
+            .unwrap_err()
+            .0,
+        "not-linked"
+    );
+    assert_eq!(
+        link_identity(&mut db, &config, &identity("u4", "alexuser"))
+            .unwrap_err()
+            .0,
+        "not-linked"
+    );
+}
+#[tokio::test]
+async fn provider_sessions_last_a_year_and_slide() {
+    let server = server();
+    two_accounts(&server);
+    let headers = create_session(&server, &server.conn().unwrap(), "b", true).unwrap();
+    let set = headers[header::SET_COOKIE].to_str().unwrap().to_string();
+    assert!(set.contains("Max-Age=31536000"), "{set}");
+    let raw = set
+        .strip_prefix("chores_session=")
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let cookie = format!("chores_session={raw}");
+    // A fresh session is not renewed on every request.
+    let (status, headers, body) =
+        request(server.clone(), "/api/auth/status", None, Some(&cookie), "").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["person"], "b");
+    assert_eq!(body["oidc"], false);
+    assert!(headers.get(header::SET_COOKIE).is_none());
+    // An older one is extended to a full year again, with a renewed cookie.
+    let soon = Utc::now().timestamp() + 30 * 86400;
+    server
+        .conn()
+        .unwrap()
+        .execute("UPDATE sessions SET expires=?1", [soon])
+        .unwrap();
+    let (_, headers, _) =
+        request(server.clone(), "/api/auth/status", None, Some(&cookie), "").await;
+    assert!(
+        headers[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=31536000")
+    );
+    let expires: i64 = server
+        .conn()
+        .unwrap()
+        .query_row("SELECT expires FROM sessions", [], |r| r.get(0))
+        .unwrap();
+    assert!(expires > Utc::now().timestamp() + 364 * 86400);
+    // Password sessions keep their fixed 90 days.
+    server
+        .conn()
+        .unwrap()
+        .execute("UPDATE sessions SET expires=?1, sliding=0", [soon])
+        .unwrap();
+    let (_, headers, body) =
+        request(server.clone(), "/api/auth/status", None, Some(&cookie), "").await;
+    assert_eq!(body["person"], "b");
+    assert!(headers.get(header::SET_COOKIE).is_none());
+}
+#[tokio::test]
+async fn provider_routes_are_absent_without_configuration() {
+    let (status, _, _) = request(server(), "/auth/login", None, None, "").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _, _) = request(server(), "/auth/callback?code=x&state=y", None, None, "").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

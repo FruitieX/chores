@@ -32,6 +32,7 @@ import {
   CheckCheck,
   WifiOff,
   CircleHelp,
+  KeyRound,
 } from "lucide-react";
 import type {
   Chore,
@@ -208,17 +209,38 @@ function Recovery({
     </Modal>
   );
 }
+const signinErrors: Record<string, string> = {
+  "not-allowed": "That passkey account isn’t allowed to use Chores.",
+  "not-linked":
+    "That passkey account isn’t linked to a Chores account yet. Sign in with your password instead.",
+  failed: "Passkey sign-in didn’t finish. Try again, or use your password.",
+};
+/** Reads and clears a `?signin=` result left by a failed provider sign-in. */
+function takeSigninError() {
+  const url = new URL(location.href);
+  const code = url.searchParams.get("signin");
+  if (!code) return "";
+  url.searchParams.delete("signin");
+  history.replaceState(null, "", url.pathname + url.search + url.hash);
+  return signinErrors[code] ?? signinErrors.failed;
+}
 function Auth({
   initialized,
+  oidc,
+  signinError,
   onDone,
 }: {
   initialized: boolean;
+  oidc: boolean;
+  signinError: string;
   onDone: (r: any) => Promise<void>;
 }) {
   const [mode, setMode] = useState(initialized ? "login" : "setup");
+  const [usePassword, setUsePassword] = useState(!oidc);
+  const passkey = oidc && initialized && mode === "login" && !usePassword;
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(signinError);
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
   const [code, setCode] = useState("");
@@ -290,210 +312,256 @@ function Auth({
               ? "Use your saved recovery code to choose a new password."
               : "Sign in to your household."}
         </p>
-        {mode === "setup" && (
-          <div className="setup-progress" aria-label={`Step ${step + 1} of 3`}>
-            {[0, 1, 2].map((s) => (
-              <span className={s <= step ? "active" : ""} key={s} />
-            ))}
-          </div>
+        {passkey && (
+          <>
+            {error && (
+              <p role="alert" className="error">
+                {error}
+              </p>
+            )}
+            <a className="primary full" href="/auth/login">
+              <KeyRound size={18} />
+              Sign in with passkey
+            </a>
+            <button
+              className="text-button auth-switch"
+              onClick={() => {
+                setUsePassword(true);
+                setError("");
+              }}
+            >
+              Use password instead
+            </button>
+          </>
         )}
-        <form onSubmit={submit}>
-          {mode === "setup" ? (
-            <>
-              {step === 0 && (
+        {!passkey && (
+          <>
+            {mode === "setup" && (
+              <div
+                className="setup-progress"
+                aria-label={`Step ${step + 1} of 3`}
+              >
+                {[0, 1, 2].map((s) => (
+                  <span className={s <= step ? "active" : ""} key={s} />
+                ))}
+              </div>
+            )}
+            <form onSubmit={submit}>
+              {mode === "setup" ? (
                 <>
-                  <Field label="Household name">
+                  {step === 0 && (
+                    <>
+                      <Field label="Household name">
+                        <input
+                          required
+                          maxLength={80}
+                          value={settings.householdName}
+                          onChange={(e) =>
+                            setSettings({
+                              ...settings,
+                              householdName: e.target.value,
+                            })
+                          }
+                        />
+                      </Field>
+                      {[0, 1].map((i) => (
+                        <Field label={`Adult ${i + 1} name`} key={i}>
+                          <input
+                            required
+                            maxLength={40}
+                            autoComplete="off"
+                            value={settings.names[i]}
+                            onChange={(e) => {
+                              const names = [...settings.names] as [
+                                string,
+                                string,
+                              ];
+                              names[i] = e.target.value;
+                              setSettings({ ...settings, names });
+                            }}
+                          />
+                        </Field>
+                      ))}
+                    </>
+                  )}
+                  {step === 1 && (
+                    <>
+                      {[0, 1].map((i) => (
+                        <fieldset key={i}>
+                          <legend>{settings.names[i]}</legend>
+                          <Field label={`${settings.names[i]} email`}>
+                            <input
+                              type="email"
+                              required
+                              autoComplete="username"
+                              value={emails[i]}
+                              onChange={(e) =>
+                                setEmails(
+                                  emails.map((v, j) =>
+                                    j === i ? e.target.value : v,
+                                  ),
+                                )
+                              }
+                            />
+                          </Field>
+                          <Field label={`${settings.names[i]} password`}>
+                            <input
+                              type="password"
+                              required
+                              minLength={12}
+                              maxLength={256}
+                              autoComplete="new-password"
+                              value={passwords[i]}
+                              onChange={(e) =>
+                                setPasswords(
+                                  passwords.map((v, j) =>
+                                    j === i ? e.target.value : v,
+                                  ),
+                                )
+                              }
+                            />
+                          </Field>
+                        </fieldset>
+                      ))}
+                      <p className="hint">
+                        At least 12 characters each. You’ll receive separate
+                        recovery codes.
+                      </p>
+                    </>
+                  )}
+                  {step === 2 && (
+                    <>
+                      <Field label="Bedtime starting date">
+                        <input
+                          type="date"
+                          required
+                          value={settings.bedtimeStart}
+                          onChange={(e) =>
+                            setSettings({
+                              ...settings,
+                              bedtimeStart: e.target.value,
+                            })
+                          }
+                        />
+                      </Field>
+                      <Field label="Who takes that first night?">
+                        <select
+                          value={settings.bedtimeFirst}
+                          onChange={(e) =>
+                            setSettings({
+                              ...settings,
+                              bedtimeFirst: e.target.value as Person,
+                            })
+                          }
+                        >
+                          <option value="a">{settings.names[0]}</option>
+                          <option value="b">{settings.names[1]}</option>
+                        </select>
+                      </Field>
+                      <div className="info">
+                        <ArrowLeftRight size={20} />
+                        <p>
+                          Plans change. Swap one night each to keep your total
+                          turns equal.
+                        </p>
+                      </div>
+                      <p className="hint">
+                        Your points balance starts with a rolling 30-day window.
+                        Chores and point values can be changed in settings.
+                      </p>
+                    </>
+                  )}
+                </>
+              ) : (
+                <>
+                  <Field label="Email">
                     <input
+                      type="email"
+                      autoComplete="username"
                       required
-                      maxLength={80}
-                      value={settings.householdName}
-                      onChange={(e) =>
-                        setSettings({
-                          ...settings,
-                          householdName: e.target.value,
-                        })
-                      }
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
                     />
                   </Field>
-                  {[0, 1].map((i) => (
-                    <Field label={`Adult ${i + 1} name`} key={i}>
+                  {mode === "recover" && (
+                    <Field label="Recovery code">
                       <input
                         required
-                        maxLength={40}
-                        autoComplete="off"
-                        value={settings.names[i]}
-                        onChange={(e) => {
-                          const names = [...settings.names] as [string, string];
-                          names[i] = e.target.value;
-                          setSettings({ ...settings, names });
-                        }}
+                        value={code}
+                        onChange={(e) => setCode(e.target.value)}
                       />
                     </Field>
-                  ))}
-                </>
-              )}
-              {step === 1 && (
-                <>
-                  {[0, 1].map((i) => (
-                    <fieldset key={i}>
-                      <legend>{settings.names[i]}</legend>
-                      <Field label={`${settings.names[i]} email`}>
-                        <input
-                          type="email"
-                          required
-                          autoComplete="username"
-                          value={emails[i]}
-                          onChange={(e) =>
-                            setEmails(
-                              emails.map((v, j) =>
-                                j === i ? e.target.value : v,
-                              ),
-                            )
-                          }
-                        />
-                      </Field>
-                      <Field label={`${settings.names[i]} password`}>
-                        <input
-                          type="password"
-                          required
-                          minLength={12}
-                          maxLength={256}
-                          autoComplete="new-password"
-                          value={passwords[i]}
-                          onChange={(e) =>
-                            setPasswords(
-                              passwords.map((v, j) =>
-                                j === i ? e.target.value : v,
-                              ),
-                            )
-                          }
-                        />
-                      </Field>
-                    </fieldset>
-                  ))}
-                  <p className="hint">
-                    At least 12 characters each. You’ll receive separate
-                    recovery codes.
-                  </p>
-                </>
-              )}
-              {step === 2 && (
-                <>
-                  <Field label="Bedtime starting date">
+                  )}
+                  <Field
+                    label={mode === "recover" ? "New password" : "Password"}
+                  >
                     <input
-                      type="date"
-                      required
-                      value={settings.bedtimeStart}
-                      onChange={(e) =>
-                        setSettings({
-                          ...settings,
-                          bedtimeStart: e.target.value,
-                        })
+                      type="password"
+                      autoComplete={
+                        mode === "recover" ? "new-password" : "current-password"
                       }
+                      required
+                      minLength={mode === "recover" ? 12 : undefined}
+                      maxLength={256}
+                      value={pass}
+                      onChange={(e) => setPass(e.target.value)}
                     />
                   </Field>
-                  <Field label="Who takes that first night?">
-                    <select
-                      value={settings.bedtimeFirst}
-                      onChange={(e) =>
-                        setSettings({
-                          ...settings,
-                          bedtimeFirst: e.target.value as Person,
-                        })
-                      }
-                    >
-                      <option value="a">{settings.names[0]}</option>
-                      <option value="b">{settings.names[1]}</option>
-                    </select>
-                  </Field>
-                  <div className="info">
-                    <ArrowLeftRight size={20} />
-                    <p>
-                      Plans change. Swap one night each to keep your total turns
-                      equal.
-                    </p>
-                  </div>
-                  <p className="hint">
-                    Your points balance starts with a rolling 30-day window.
-                    Chores and point values can be changed in settings.
-                  </p>
                 </>
               )}
-            </>
-          ) : (
-            <>
-              <Field label="Email">
-                <input
-                  type="email"
-                  autoComplete="username"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </Field>
-              {mode === "recover" && (
-                <Field label="Recovery code">
-                  <input
-                    required
-                    value={code}
-                    onChange={(e) => setCode(e.target.value)}
-                  />
-                </Field>
+              {error && (
+                <p role="alert" className="error">
+                  {error}
+                </p>
               )}
-              <Field label={mode === "recover" ? "New password" : "Password"}>
-                <input
-                  type="password"
-                  autoComplete={
-                    mode === "recover" ? "new-password" : "current-password"
-                  }
-                  required
-                  minLength={mode === "recover" ? 12 : undefined}
-                  maxLength={256}
-                  value={pass}
-                  onChange={(e) => setPass(e.target.value)}
-                />
-              </Field>
-            </>
-          )}
-          {error && (
-            <p role="alert" className="error">
-              {error}
-            </p>
-          )}
-          <div className="actions">
-            {mode === "setup" && step > 0 && (
+              <div className="actions">
+                {mode === "setup" && step > 0 && (
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => setStep(step - 1)}
+                    disabled={busy}
+                  >
+                    Back
+                  </button>
+                )}
+                <button className="primary" disabled={busy}>
+                  {busy
+                    ? "Please wait…"
+                    : mode === "setup"
+                      ? step < 2
+                        ? "Continue"
+                        : "Create our household"
+                      : mode === "recover"
+                        ? "Reset password"
+                        : "Sign in"}
+                </button>
+              </div>
+            </form>
+            {initialized && (
               <button
-                type="button"
-                className="secondary"
-                onClick={() => setStep(step - 1)}
-                disabled={busy}
+                className="text-button auth-switch"
+                onClick={() => {
+                  setMode(mode === "login" ? "recover" : "login");
+                  setError("");
+                }}
               >
-                Back
+                {mode === "login" ? "Forgot your password?" : "Back to sign in"}
               </button>
             )}
-            <button className="primary" disabled={busy}>
-              {busy
-                ? "Please wait…"
-                : mode === "setup"
-                  ? step < 2
-                    ? "Continue"
-                    : "Create our household"
-                  : mode === "recover"
-                    ? "Reset password"
-                    : "Sign in"}
-            </button>
-          </div>
-        </form>
-        {initialized && (
-          <button
-            className="text-button auth-switch"
-            onClick={() => {
-              setMode(mode === "login" ? "recover" : "login");
-              setError("");
-            }}
-          >
-            {mode === "login" ? "Forgot your password?" : "Back to sign in"}
-          </button>
+            {initialized && oidc && (
+              <button
+                className="text-button auth-switch"
+                onClick={() => {
+                  setMode("login");
+                  setUsePassword(false);
+                  setError("");
+                }}
+              >
+                Sign in with passkey instead
+              </button>
+            )}
+          </>
         )}
       </main>
     </div>
@@ -512,6 +580,8 @@ const navigation = [
 ];
 function App() {
   const [initialized, setInitialized] = useState<boolean | null>(null);
+  const [oidc, setOidc] = useState(false);
+  const [signinError] = useState(takeSigninError);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [view, setView] = useState(location.hash.slice(1) || "home");
   const [error, setError] = useState("");
@@ -565,6 +635,7 @@ function App() {
     api("/auth/status")
       .then(async (s) => {
         setInitialized(s.initialized);
+        setOidc(!!s.oidc);
         if (s.person) await refresh();
       })
       .catch(() => {
@@ -684,7 +755,15 @@ function App() {
         )}
       </div>
     );
-  if (!snapshot) return <Auth initialized={initialized} onDone={authDone} />;
+  if (!snapshot)
+    return (
+      <Auth
+        initialized={initialized}
+        oidc={oidc}
+        signinError={signinError}
+        onDone={authDone}
+      />
+    );
   const { household: h, person, today } = snapshot;
   const name = personName(h, person);
   const disabled = busy || !connected || !!pending;
