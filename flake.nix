@@ -9,7 +9,7 @@
       frontend = pkgs.buildNpmPackage {
         pname = "chores-ui"; version = "0.1.0"; nodejs = pkgs.nodejs_26;
         src = pkgs.lib.cleanSourceWith {src = ./.; filter = path: type: !(builtins.elem (baseNameOf path) ["node_modules" "target" "dist" ".git" "data" "test-results" "result" "backend" "docs" "deploy" ".github"]);};
-        npmDepsHash = "sha256-c0WQTjLLnWC5gCOKQm0AMxS+tOgvBFqe6gYRjX6bkBc=";
+        npmDeps = pkgs.importNpmLock {npmRoot = ./.;}; npmConfigHook = pkgs.importNpmLock.npmConfigHook;
         installPhase = ''mkdir -p $out/share/chores; cp -r dist/. $out/share/chores/'';
       };
       backend = pkgs.rustPlatform.buildRustPackage {
