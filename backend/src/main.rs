@@ -4,7 +4,7 @@ mod error;
 mod oidc;
 #[cfg(test)]
 mod tests;
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Query, Request, State},
@@ -16,7 +16,7 @@ use axum::{
 use chrono::Utc;
 use domain::{Household, Operation, Settings};
 use error::{ApiError, Result};
-use rand::{RngCore, rngs::OsRng};
+use rand::{TryRng, rngs::SysRng};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -81,11 +81,16 @@ impl Server {
 }
 fn token() -> String {
     let mut bytes = [0u8; 32];
-    OsRng.fill_bytes(&mut bytes);
+    SysRng
+        .try_fill_bytes(&mut bytes)
+        .expect("operating system random number generator failed");
+    hex(&bytes)
+}
+fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 fn digest(value: &str) -> String {
-    format!("{:x}", Sha256::digest(value.as_bytes()))
+    hex(&Sha256::digest(value.as_bytes()))
 }
 fn email(value: &str) -> Result<String> {
     let v = value.trim().to_lowercase();
@@ -110,7 +115,7 @@ async fn hash(value: String) -> Result<String> {
     let _permit = AUTH_SLOTS.acquire().await.map_err(ApiError::internal)?;
     tokio::task::spawn_blocking(move || {
         Argon2::default()
-            .hash_password(value.as_bytes(), &SaltString::generate(&mut OsRng))
+            .hash_password(value.as_bytes())
             .map(|h| h.to_string())
             .map_err(ApiError::internal)
     })
@@ -871,7 +876,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
             use std::os::unix::fs::PermissionsExt;
             file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
         }
-        db.backup("main", path, None)?;
+        db.backup("main", path, None::<fn(rusqlite::backup::Progress)>)?;
         return Ok(());
     }
     let origin = std::env::var("CHORES_ORIGIN").unwrap_or("http://localhost:3101".into());

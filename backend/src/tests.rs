@@ -559,3 +559,26 @@ async fn provider_routes_are_absent_without_configuration() {
     let (status, _, _) = request(server(), "/auth/callback?code=x&state=y", None, None, "").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn stored_argon2id_hashes_still_verify() {
+    // PHC string in the format stored by earlier releases (argon2id v19).
+    let stored = "$argon2id$v=19$m=16384,t=2,p=1$c2FsdHNhbHRzYWx0MTZi$paXuM2e2ddmdHrFD1sZ6XaWvIPRbO5rou8z7hWzHeI4";
+    assert!(
+        super::verify("correct horse battery".into(), stored.into())
+            .await
+            .unwrap()
+    );
+    assert!(
+        !super::verify("wrong horse battery".into(), stored.into())
+            .await
+            .unwrap()
+    );
+    let fresh = super::hash("correct horse battery".into()).await.unwrap();
+    assert!(fresh.starts_with("$argon2id$v=19$"));
+    assert!(
+        super::verify("correct horse battery".into(), fresh)
+            .await
+            .unwrap()
+    );
+}
