@@ -30,6 +30,24 @@ nix develop --command kubectl get kustomization chores -n flux-system
 nix develop --command kubectl rollout status deployment/chores
 ```
 
+If a gateway injects a feedback widget, set `CHORES_FEEDBACK_HUB` to its origin (e.g. `https://feedback.example.com`) so the Content-Security-Policy allows it.
+
+## Passkey sign-in (OpenID Connect)
+
+Optionally, Chores can sign people in through an OpenID Connect provider such as Pocket ID. Without these variables, only password sign-in exists.
+
+| Variable                     | Meaning                                                                                                                                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CHORES_OIDC_ISSUER`         | Provider issuer URL, e.g. `https://id.example.com`                                                                                                                                                |
+| `CHORES_OIDC_CLIENT_ID`      | Client id registered at the provider (`chores`)                                                                                                                                                   |
+| `CHORES_OIDC_CLIENT_SECRET`  | Client secret (keep it in a secret)                                                                                                                                                               |
+| `CHORES_OIDC_ALLOWED_GROUPS` | Comma-separated groups; the `groups` claim must contain one. Empty allows anyone the provider admits.                                                                                             |
+| `CHORES_OIDC_USER_MAP`       | Comma-separated `provideruser:account` pairs linking provider usernames (`preferred_username`, case-insensitive) to the local accounts, given as `a`/`b` or the account email, e.g. `sam:a,kim:b` |
+
+The first three must be set together. Register `${CHORES_ORIGIN}/auth/callback` as the redirect URL. With them set, the login screen leads with **Sign in with passkey**; **Use password instead** keeps password sign-in, recovery and the first-launch setup available.
+
+On a person's first provider sign-in, the user map links their provider identity (issuer and `sub`) to the account permanently; later sign-ins use that link even if the username changes. An account links to one identity only, and provider users without a mapping are refused, so no accounts are created. Provider sessions last 365 days and renew themselves while the app is used; password sessions keep their fixed 90 days.
+
 ## Backups
 
 Settings downloads household JSON containing chores, historical credits and bedtime swaps, excluding account credentials. Restore is available to the first adult, requires confirmation and checks the current revision. Version 2 imports replay paired swaps, undo actions and dated pattern changes to validate the resulting assignments; version 1 imports migrate automatically. Legacy bedtime completion values remain in history and are excluded from chore totals. Download a current backup before replacing shared data.
