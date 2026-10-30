@@ -1,10 +1,10 @@
 # Deployment and recovery
 
-Chores uses a private GitHub repository and GHCR image, a homelab Flux deployment, an NFS-backed SQLite database, and the private Envoy HTTPS gateway at **https://chores.fruitiex.org**. Live manifests are in `~/projects/homelab/apps/chores`; reusable copies are under `deploy/kubernetes/`.
+Chores ships as a GHCR container image and is deployed with Flux from the [homelab](https://github.com/FruitieX/homelab) repository (`apps/chores`), with an NFS-backed SQLite database behind a private HTTPS gateway. Reusable manifests are under `deploy/kubernetes/`.
 
 ## First launch
 
-Open the private HTTPS address while on LAN/VPN. Enter your household name, the two names, a separate email and password for each account, and a known bedtime date and assignee. First launch needs no setup token. Setup creates both accounts atomically and becomes unavailable afterward. Save both recovery codes separately in your password managers. The first adult is signed in automatically; the other can sign in on their own device immediately.
+Open the app's HTTPS address. Enter your household name, the two names, a separate email and password for each account, and a known bedtime date and assignee. First launch needs no setup token. Setup creates both accounts atomically and becomes unavailable afterward. Save both recovery codes separately in your password managers. The first adult is signed in automatically; the other can sign in on their own device immediately.
 
 Emails are login identifiers; Chores does not send email. Forgotten passwords use the account's saved recovery code. Password recovery and changes replace the recovery code and sign out that person's existing sessions. Each account can record and undo its own chores; either adult can change shared chore/settings values and exchange or undo bedtime swaps and restart alternation from a chosen day. The first account can restore the household backup.
 
@@ -15,19 +15,19 @@ nix build .#container
 docker load -i result
 ```
 
-CI on main validates Rust, frontend, the real browser flows, and the Nix container, then publishes `ghcr.io/fruitiex/chores:main` and a source revision tag. The repository and package are private. Kubernetes uses the existing `ghcr-credentials` pull secret. Deploy an immutable image digest in the homelab manifest after the build passes, then commit/push the homelab change for Flux. Publication does not itself update the cluster.
+CI on main validates Rust, frontend, the real browser flows, and the Nix container, then publishes `ghcr.io/fruitiex/chores:main` and a source revision tag. If the package is private, give Kubernetes a registry pull secret. Deploy an immutable image digest in your Flux manifests after the build passes.
 
 ## Kubernetes
 
-Use one replica with Recreate, UID/GID 10001, a read-only root filesystem and writable `/tmp`. Mount persistent data at `/data`. The supplied route attaches only to `envoy-gateway-system/private` on its HTTPS listener; no public route exists. `CHORES_ORIGIN=https://chores.fruitiex.org` must exactly match the address users visit. The existing wildcard certificate and private DNS cover the host.
+Use one replica with Recreate, UID/GID 10001, a read-only root filesystem and writable `/tmp`. Mount persistent data at `/data`. The supplied route attaches only to a private gateway's HTTPS listener; no public route exists. `CHORES_ORIGIN` (e.g. `https://chores.example.com`) must exactly match the address users visit. Provide DNS and a TLS certificate for the host.
 
-The NFS claim `chores-data-nfs` uses `nfs-csi`. It has Flux pruning disabled to protect household data if manifests are removed. NFS requires `CHORES_SQLITE_JOURNAL_MODE=DELETE` and working filesystem locks and durable writes. SQLite [documents that WAL does not work on network filesystems](https://www.sqlite.org/wal.html); Chores uses synchronous EXTRA with rollback journaling. Do not run multiple app replicas on the same SQLite file.
+The example NFS claim has Flux pruning disabled to protect household data if manifests are removed. NFS requires `CHORES_SQLITE_JOURNAL_MODE=DELETE` and working filesystem locks and durable writes. SQLite [documents that WAL does not work on network filesystems](https://www.sqlite.org/wal.html); Chores uses synchronous EXTRA with rollback journaling. Do not run multiple app replicas on the same SQLite file.
 
 Health: `/api/health` reports process liveness; `/api/ready` checks the database. `/api/auth/status` exposes whether first launch has been completed, without revealing household details. Authenticated household data is not cached by the service worker.
 
 ```sh
-KUBECONFIG=~/projects/homelab/kubeconfig nix develop --command kubectl get kustomization chores -n flux-system
-KUBECONFIG=~/projects/homelab/kubeconfig nix develop --command kubectl rollout status deployment/chores
+nix develop --command kubectl get kustomization chores -n flux-system
+nix develop --command kubectl rollout status deployment/chores
 ```
 
 ## Backups
@@ -50,23 +50,3 @@ Before upgrades, take a database backup and pin the new image digest. The bedtim
 For full restoration, suspend the Chores Flux Kustomization, scale its deployment to zero, restore `chores.sqlite3` from a consistent backup with owner UID/GID 10001, and remove obsolete WAL/SHM files while the app is stopped. Restart the deployment, check readiness and both logins, then resume Flux. Never replace the database under a running server.
 
 A user who loses both password and recovery code can restore a known full database backup. There is no remote account recovery service. Do not delete the live volume to reset a household unless loss of all its data is explicitly intended.
-
-## Verified deployment — 2026-10-01
-
-[CI run 36919334442](https://github.com/FruitieX/chores/actions/runs/36919334442) passed for application revision `ce6e187961869a1b320c7692377e1d9d79cf8dc8`. Homelab commit `ea05c36` deploys its private image digest `sha256:5a19a186ac7da47e846b151f441c62b39a6dcbacdca9573fbd5b02a0b37f1083`. Flux reports Ready with one ready replica and a bound 5 GiB NFS volume.
-
-DNS resolves the app to `192.168.11.99`; private HTTPS readiness passes, and the public gateway returns 404. A read-only production browser check confirms first-launch setup, an active service worker and zero Chromium installability errors. No production household was created. Household dates and the rolling balance use Europe/Helsinki time.
-
-## Verified bedtime calendar update — 2026-10-02
-
-[CI run 36970079384](https://github.com/FruitieX/chores/actions/runs/36970079384) passed for runtime revision `f97f8e11ef8db907becce9a309aab4403186e96a`. Homelab commit `bbe26a3` pins digest `sha256:228eb6d8828bcd02018b812df71661352217e519ee05c71c7ef1b4953e9d49af`. Flux is Ready/Healthy, with one ready replica and the existing Bound NFS claim.
-
-Full backups were taken before and after the schema 2 migration. Private comparisons verified unchanged accounts, sessions, settings and completion snapshots, and preserved existing paired swaps. Operational backups are outside Git in `/home/rasse/.local/share/chores/backups/`, with mode 0600.
-
-Live browser verification loaded the new assets over private HTTPS, confirmed readiness, unauthenticated API protection and the service worker, and found no page errors or mobile overflow. It made no writes. The public gateway returns 404; anonymous GHCR access returns 401. Bedtime is now schedule-only, with direct calendar swaps, undo and date-specific restarts.
-
-## Verified visual refresh — 2026-10-02
-
-[CI run 36975831493](https://github.com/FruitieX/chores/actions/runs/36975831493) passed for runtime revision `e260d06af498b8ee14e968cb0f9aa2cdfb02c7be`. Homelab commit `0d13dd0` pins digest `sha256:f11980a0c29d5d3aa5e8e3163ff53ae36ab0981981298ffbc11766b3b298c8b2`. Flux is Ready/Healthy with one ready replica and the existing Bound NFS claim.
-
-A private full database backup was verified before rollout. This frontend update keeps schema 2. Live browser checks confirm the new blue and amber assets, bold headings, SVG and PNG app icons, theme colors, service worker and mobile layout without page errors or writes. Private readiness returns 200, the public gateway 404, and anonymous registry access 401. Close and reopen app windows to activate the updated static cache.

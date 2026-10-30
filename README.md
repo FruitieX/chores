@@ -2,7 +2,7 @@
 
 A simple app for sharing the work at home. Two adults record their own chores, compare a rolling points balance, and alternate bedtime duties with fair two-night swaps.
 
-Live at **https://chores.fruitiex.org** through the homelab's private HTTPS gateway. Connect to the home network or VPN to use it. First launch walks you through household names, both accounts, and the bedtime starting night; no setup token is needed. Save each account's recovery code in its password manager.
+It is meant to run on a private network behind an HTTPS reverse proxy. First launch walks you through household names, both accounts, and the bedtime starting night; no setup token is needed. Save each account's recovery code in its password manager.
 
 - Configurable chores, points, categories, icons and optional maintenance intervals.
 - A rolling last-30-days balance, adjustable to other periods or all time.
@@ -40,7 +40,7 @@ Browser checks start an isolated production server and temporary database, creat
 
 ## Deployment
 
-The Nix container serves frontend and API on port 8080 as UID/GID 10001. Persist `/data`, and set `CHORES_ORIGIN` to the exact HTTPS address. Keep one replica. For NFS, use `CHORES_SQLITE_JOURNAL_MODE=DELETE`; local/block storage defaults to WAL. If a gateway injects a feedback widget, set `CHORES_FEEDBACK_HUB` to its origin (e.g. `https://feedback.fruitiex.org`) so the Content-Security-Policy allows it.
+The Nix container serves frontend and API on port 8080 as UID/GID 10001. Persist `/data`, and set `CHORES_ORIGIN` to the exact HTTPS address. Keep one replica. For NFS, use `CHORES_SQLITE_JOURNAL_MODE=DELETE`; local/block storage defaults to WAL. If a gateway injects a feedback widget, set `CHORES_FEEDBACK_HUB` to its origin (e.g. `https://feedback.example.com`) so the Content-Security-Policy allows it.
 
 ### Passkey sign-in (OpenID Connect)
 
@@ -58,6 +58,6 @@ The first three must be set together. Register `${CHORES_ORIGIN}/auth/callback` 
 
 On a person's first provider sign-in, the user map links their provider identity (issuer and `sub`) to the account permanently; later sign-ins use that link even if the username changes. An account links to one identity only, and provider users without a mapping are refused, so no accounts are created. Provider sessions last 365 days and renew themselves while the app is used; password sessions keep their fixed 90 days.
 
-[Deployment and recovery](docs/DEPLOYMENT.md) documents homelab manifests, publishing, backups and upgrades. [The plan](docs/PLAN.md) records the user requirements and completion checks.
+[Deployment and recovery](docs/DEPLOYMENT.md) documents Kubernetes manifests, publishing, backups and upgrades. [The plan](docs/PLAN.md) records the user requirements and completion checks.
 
 DM Sans is locally bundled from Google Fonts under its SIL Open Font License in `public/fonts/`. Icons are Lucide (ISC license). The app icon depicts two checklist cards, drawn as original SVG artwork in `public/icon.svg`; `scripts/make-icons.mjs` renders the install icons.

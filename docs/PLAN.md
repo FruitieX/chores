@@ -1,10 +1,10 @@
-# Chores implementation and deployment plan
+# Chores implementation plan
 
 ## Goal
 
-Complete a working, tested chores sharing app in `/home/rasse/chores`, push it to a private GitHub repository, and deploy it to the homelab at **https://chores.fruitiex.org** through the private ingress. Verify the deployed app and leave it ready for first-time household setup.
+Complete a working, tested chores sharing app, publish it to GitHub, and deploy it to the homelab through a private ingress. Verify the deployed app and leave it ready for first-time household setup.
 
-The user authorized building, publishing to a private repository, and deploying the app. They explicitly requested that completing this plan be the active goal. No production accounts or household activity should be created by verification.
+The user authorized building, publishing, and deploying the app. They explicitly requested that completing this plan be the active goal. No production accounts or household activity should be created by verification.
 
 ## Agreed product requirements
 
@@ -17,7 +17,7 @@ The user authorized building, publishing to a private repository, and deploying 
 - Alternate bedtime duties daily. Allow exchanging two dates, one assigned to each adult, with both changes committed together. Swaps preserve total turns; monthly totals may differ for a swap across months.
 - Bedtime is schedule-only. It is not a chore, has no points, and has no completion buttons. Existing bedtime completion records retain their original values in history and are excluded from the balance.
 - Keep the app simple; no AI integration.
-- Name: **Chores**. Private address: **https://chores.fruitiex.org**. Private repository: **FruitieX/chores**.
+- Name: **Chores**. Repository: **FruitieX/chores**.
 
 ## Implementation decisions
 
@@ -35,7 +35,7 @@ The user authorized building, publishing to a private repository, and deploying 
 - Choose a date and first adult directly in the calendar to restart daily alternation from that day. Preserve every earlier assignment. Replace later starting patterns and overrides at or after the chosen date, keeping the event history. A crossing swap keeps its earlier assignment and is marked replaced. The setup anchor stays immutable.
 - Backups use version 2 and replay swaps, undos and date-specific restarts. Version 1 imports migrate automatically. SQLite upgrades transactionally to schema 2, preserving accounts, sessions, operation identifiers and all historical completion snapshots.
 - Downloadable household JSON backups exclude passwords. Restore is confirmed and revision guarded, and validates paired swap history. A database backup CLI supports complete operational backups.
-- Persistent homelab NFS volume, one replica with Recreate, SQLite DELETE journal mode and synchronous EXTRA. Existing private Envoy Gateway HTTPS route and GHCR pull credentials.
+- Persistent NFS volume, one replica with Recreate, SQLite DELETE journal mode and synchronous EXTRA. A private Gateway API HTTPS route.
 
 ## Work and completion checklist
 
@@ -65,30 +65,19 @@ The user authorized building, publishing to a private repository, and deploying 
 ### Publish and deployment
 
 - [x] Write README and operational deployment/recovery instructions.
-- [x] Create private FruitieX/chores repository, commit with Conventional Commits and push tested changes.
-- [x] Add CI validation and private GHCR image publication.
+- [x] Create the FruitieX/chores repository, commit with Conventional Commits and push tested changes.
+- [x] Add CI validation and GHCR image publication.
 - [x] Add Chores homelab Flux manifests with private ingress, persistent NFS storage and pinned image.
 - [x] Commit/push only task-related homelab changes; preserve unrelated work.
 - [x] Verify Flux health, ready replica, persistent volume, private HTTPS and lack of public ingress exposure.
 - [x] Confirm the live app is uninitialized and ready for the user's first-time setup.
-- [x] Report live app and private repo links and any practical limitations; mark the active goal complete only after all required work is done.
+- [x] Report live app and repo links and any practical limitations; mark the active goal complete only after all required work is done.
 
 ## Completion record — 2026-10-01 (original release)
 
-Implementation, verification, source publication and homelab deployment are complete.
+Implementation, verification, source publication and homelab deployment are complete. Local and CI container tests verify read-only/non-root runtime, idempotent writes, persistence across restart, private online backups and full database restoration.
 
-- Private source repository: [FruitieX/chores](https://github.com/FruitieX/chores).
-- Tested application revision: `ce6e187961869a1b320c7692377e1d9d79cf8dc8`.
-- Successful CI: [run 36919334442](https://github.com/FruitieX/chores/actions/runs/36919334442), including all 10 Rust tests, formatting, Clippy, frontend type checking/build, two-account production browser checks and Nix container/runtime checks.
-- Published private image digest: `sha256:5a19a186ac7da47e846b151f441c62b39a6dcbacdca9573fbd5b02a0b37f1083`. Anonymous registry access is denied.
-- Homelab deployment commit: `ea05c36b0df4d57ed07c478a1e0eeb00001a5dea`.
-- Flux Chores Kustomization is Ready at that revision; deployment has one ready replica and the 5 GiB `chores-data-nfs` claim is Bound.
-- DNS resolves `chores.fruitiex.org` to private gateway `192.168.11.99`. HTTPS readiness returns 200 there. The public gateway returns 404. HTTPRoute attaches only to `private`, with Accepted and ResolvedRefs true.
-- Database permissions are 0600, owned by UID/GID 10001. Local and CI container tests verified read-only/non-root runtime, idempotent writes, persistence across restart, private online backups and full database restoration.
-- A production browser check verified the actual first-launch screen, active service worker, zero page errors and zero Chromium installability errors using a disposable persistent profile. It made zero POST requests. Production remains uninitialized, ready for the user's setup.
-- Real mobile and desktop screenshots from isolated households are in ignored `test-results/`; the read-only production first-launch capture is `test-results/live-first-launch.png`.
-
-No AI integration, offline completion queue or external account recovery service is included. Recording requires LAN/VPN connectivity. Names, accounts and the bedtime starting pattern are entered in first launch without a setup token. Household days use Europe/Helsinki time. Subsequent CI runs publish images; deployment upgrades are applied through pinned homelab manifests.
+No AI integration, offline completion queue or external account recovery service is included. Recording requires a connection to the server. Names, accounts and the bedtime starting pattern are entered in first launch without a setup token. Household days use Europe/Helsinki time. CI publishes images; deployment upgrades are applied through pinned homelab manifests.
 
 ## Bedtime calendar update — 2026-10-02
 
@@ -102,16 +91,8 @@ The user's follow-up supersedes the original release's bedtime logging decisions
 - [x] Migrate existing households, keep separate accounts and accept older household backups.
 - [x] Complete Rust, frontend, browser, screenshot and container checks.
   - All 17 Rust tests, formatting, Clippy, frontend type checking/build and formatting pass. Two-account browser checks cover tap-to-swap, cross-month selection, shared undo, dated restarts, legacy backup migration, historical values and balance exclusion, PWA, reconnect and four responsive widths. Mobile and desktop screenshots were inspected. Nix container checks pass for persistence, idempotency, private backup/full restoration and non-root/read-only operation.
-- [x] Commit/push the update to the private source repository and pass CI.
-- [x] Take a private database backup, deploy a pinned image and verify the private ingress.
-
-The update is deployed and verified:
-
-- Runtime revision: `f97f8e11ef8db907becce9a309aab4403186e96a`; [CI run 36970079384](https://github.com/FruitieX/chores/actions/runs/36970079384) passed all checks and private publication.
-- Image digest: `sha256:228eb6d8828bcd02018b812df71661352217e519ee05c71c7ef1b4953e9d49af`. Anonymous registry access returns 401.
-- Homelab commit: `bbe26a39c625cc3ebadbf3d31926d10f96ddd31e`. Flux Ready/Healthy, one ready replica, persistent claim Bound.
-- Private pre-upgrade and post-upgrade full backups pass integrity checks. Comparing them confirms schema 2, unchanged accounts and sessions, unchanged completion snapshots and household settings, and preserved existing paired swaps. Backup files stay outside Git.
-- Live HTTPS browser verification loaded the current frontend and service worker, checked mobile layout and unauthenticated API privacy, and found no page errors. It made zero POST requests. Private readiness returns 200; public gateway returns 404.
+- [x] Commit/push the update to the source repository and pass CI.
+- [x] Take a database backup, deploy a pinned image and verify the private ingress.
 
 ## Distinct visual identity — 2026-10-02
 
@@ -122,12 +103,4 @@ The user requested a distinct look and feel so Chores is recognizable among thei
 - [x] Make completed-chore recording clearer with checkmark affordances and responsive card feedback; keep the existing flows and data rules.
 - [x] Verify Rust/frontend checks, production browser flows, mobile/desktop screenshots and the production container.
   - All 17 Rust tests, formatting and Clippy pass; frontend type checking, formatting and production build pass. Two-account browser flows pass at 360, 390, 768 and 1440 px. Home, calendar, settings and dialog screenshots were inspected. Container persistence, idempotency and private backup/restore checks pass.
-- [x] Push the private source, pass CI, deploy a pinned image and verify private HTTPS.
-
-The visual refresh is deployed and verified:
-
-- Runtime revision: `e260d06af498b8ee14e968cb0f9aa2cdfb02c7be`; [CI run 36975831493](https://github.com/FruitieX/chores/actions/runs/36975831493) passed all checks and private publication.
-- Image digest: `sha256:f11980a0c29d5d3aa5e8e3163ff53ae36ab0981981298ffbc11766b3b298c8b2`; homelab commit `0d13dd0d314b16c3abe0c47d55b528ef76fd904c`. Flux is Ready/Healthy, with one ready replica and the existing Bound claim.
-- A private full database backup passed integrity checks before rollout. This frontend refresh keeps schema 2 and requires no data migration.
-- Live browser checks verified the new asset revision, bold headings, theme colors and exact SVG/PNG icon contents, an active service worker, mobile layout, no page errors and zero writes. Screenshots are under ignored `test-results/`.
-- Private HTTPS readiness returns 200, public gateway 404 and anonymous GHCR access 401. The route remains private, Accepted and ResolvedRefs true.
+- [x] Push the source, pass CI, deploy a pinned image and verify private HTTPS.
