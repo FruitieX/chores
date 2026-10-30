@@ -77,3 +77,7 @@ nix develop --command npm run test:ui
 ## Credits
 
 DM Sans is bundled from Google Fonts under the SIL Open Font License (`public/fonts/`). Icons are [Lucide](https://lucide.dev) (ISC license). The app icon is original artwork in `public/icon.svg`; `scripts/make-icons.mjs` renders the install icons from it.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
