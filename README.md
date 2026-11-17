@@ -20,7 +20,7 @@ Tap a chore when you've done it and it's credited to you, optionally with a date
 
 The home screen shows both totals over a rolling window, 30 days by default, or a different period or all time if you prefer. History lists every entry and lets you undo your own, and the undo is kept in the history too.
 
-Bedtime alternates night by night. To trade, tap one of your upcoming nights and then one of the other person's, and the two nights swap, so you both keep the same number of turns. Swaps can be undone, and you can restart the alternation from any date without changing the nights before it. Bedtime isn't worth points.
+Bedtime alternates night by night. To trade, tap one night (past or upcoming) and then one of the other person's, and the two nights swap, so you both keep the same number of turns. Past swaps are useful for correcting a night that has already happened. Swaps can be undone, and you can restart the alternation from any date without changing the nights before it. Bedtime isn't worth points.
 
 Each person has their own login and recovery code, and changes show up on the other phone within a few seconds. Recording needs a connection; if a request gets lost, retrying it won't count the chore twice. Over HTTPS it can be installed to the home screen as a PWA.
 

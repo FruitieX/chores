@@ -277,9 +277,6 @@ impl Household {
                 self.settings = settings;
             }
             Operation::Swap { first, second } => {
-                if date(&first)? < today || date(&second)? < today {
-                    return Err(ApiError::bad("Choose two upcoming nights, today or later."));
-                }
                 let mut schedule = self.schedule()?;
                 let event = Event::Swap {
                     swap: Swap {

@@ -31,7 +31,7 @@ The user authorized building, publishing, and deploying the app. They explicitly
 - Undo removes credit but preserves a marked history entry; only its recorder can undo a completion.
 - Archive chores without deleting history. Bedtime turns live only in the calendar.
 - Optional repeat intervals support maintenance due status, based on the latest unremoved completion. Unrecorded maintenance is marked clearly.
-- Tap an upcoming calendar night, then an opposite-person night, to confirm an atomic swap; selection persists across month navigation. Either adult can undo a swap, including after its dates pass. Later overlapping swaps must be undone first; a new pattern can supersede a swap.
+- Tap any calendar night, past or upcoming, then an opposite-person night, to confirm an atomic swap; selection persists across month navigation. Either adult can undo a swap, including after its dates pass. Later overlapping swaps must be undone first; a new pattern can supersede a swap.
 - Choose a date and first adult directly in the calendar to restart daily alternation from that day. Preserve every earlier assignment. Replace later starting patterns and overrides at or after the chosen date, keeping the event history. A crossing swap keeps its earlier assignment and is marked replaced. The setup anchor stays immutable.
 - Backups use version 2 and replay swaps, undos and date-specific restarts. Version 1 imports migrate automatically. SQLite upgrades transactionally to schema 2, preserving accounts, sessions, operation identifiers and all historical completion snapshots.
 - Downloadable household JSON backups exclude passwords. Restore is confirmed and revision guarded, and validates paired swap history. A database backup CLI supports complete operational backups.
@@ -104,3 +104,12 @@ The user requested a distinct look and feel so Chores is recognizable among thei
 - [x] Verify Rust/frontend checks, production browser flows, mobile/desktop screenshots and the production container.
   - All 17 Rust tests, formatting and Clippy pass; frontend type checking, formatting and production build pass. Two-account browser flows pass at 360, 390, 768 and 1440 px. Home, calendar, settings and dialog screenshots were inspected. Container persistence, idempotency and private backup/restore checks pass.
 - [x] Push the source, pass CI, deploy a pinned image and verify private HTTPS.
+
+## Past-night swaps — 2026-11-17
+
+The user asked for bedtime swaps to work with nights that have already passed.
+
+- [x] Let the calendar select and swap past nights as well as upcoming ones.
+- [x] Keep paired atomic changes, revision guards and undo rules unchanged; past swaps still need their nights to belong to opposite adults.
+- [x] Show that a confirmed swap touches an already-passed night.
+- [x] Cover the backend acceptance and undo of past swaps with tests, and extend the production browser flow.

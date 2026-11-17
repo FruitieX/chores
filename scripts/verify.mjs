@@ -436,6 +436,57 @@ try {
   await eventually(async () =>
     assert.equal((await state(p)).household.swaps.at(-1).undone, true),
   );
+  // Past nights can be traded too: restart the pattern earlier, then swap them.
+  await p.reload();
+  await p.getByRole("button", { name: "New starting date" }).click();
+  await p.getByRole("dialog").getByLabel("Starting date").fill(add(today, -6));
+  await p
+    .getByRole("dialog")
+    .getByLabel("First night belongs to")
+    .selectOption("a");
+  await p
+    .getByRole("dialog")
+    .getByRole("button", { name: "Start new pattern" })
+    .click();
+  await p.getByRole("dialog").waitFor({ state: "hidden" });
+  const pastFirst = add(today, -5);
+  const pastSecond = add(today, -4);
+  await pickDay(p, pastFirst);
+  await pickDay(p, pastSecond);
+  await p
+    .getByRole("dialog")
+    .getByText("This changes a night that has already passed.")
+    .waitFor();
+  await capture(p, "test-results/desktop-past-swap.png");
+  await p
+    .getByRole("dialog")
+    .getByRole("button", { name: "Swap both nights" })
+    .click();
+  await p.getByRole("dialog").waitFor({ state: "hidden" });
+  s = await state(p);
+  assert.equal(s.household.overrides[pastFirst], "a");
+  assert.equal(s.household.overrides[pastSecond], "b");
+  await p
+    .getByRole("button", {
+      name: `Undo swap ${pastFirst} and ${pastSecond}`,
+      exact: true,
+    })
+    .click();
+  await eventually(async () =>
+    assert.equal((await state(p)).household.overrides[pastFirst], undefined),
+  );
+  await q.reload();
+  await pickDay(q, pastFirst);
+  await pickDay(q, pastSecond);
+  await q
+    .getByRole("dialog")
+    .getByText("This changes a night that has already passed.")
+    .waitFor();
+  await capture(q, "test-results/mobile-past-swap.png");
+  await q
+    .getByRole("dialog")
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
   // Changing the locked starting pattern must fail, with no partial edits.
   s = await state(p);
   assert.equal(

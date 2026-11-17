@@ -1245,15 +1245,10 @@ function Calendar({ h, today, mutate, disabled }: Shared) {
     (p) => days.filter((d) => assignee(h, d) === p).length,
   );
   const selectedPerson = selected ? assignee(h, selected) : null;
-  const canSwap = !!selected && selected >= today && !!selectedPerson;
+  const canSwap = !!selected && !!selectedPerson;
   function pick(day: string) {
     if (day === selected) setSelected(null);
-    else if (
-      canSwap &&
-      day >= today &&
-      assignee(h, day) &&
-      assignee(h, day) !== selectedPerson
-    )
+    else if (canSwap && assignee(h, day) && assignee(h, day) !== selectedPerson)
       setPair([selected!, day]);
     else setSelected(day);
   }
@@ -1326,7 +1321,7 @@ function Calendar({ h, today, mutate, disabled }: Shared) {
                 </strong>
                 <p>
                   {canSwap
-                    ? `Now choose a ${personName(h, selectedPerson === "a" ? "b" : "a")} night to exchange. You can move to another month.`
+                    ? `Now choose a ${personName(h, selectedPerson === "a" ? "b" : "a")} night to exchange, past or upcoming. You can move to another month.`
                     : "You can start a new alternating pattern from this day."}
                 </p>
               </div>
@@ -1350,7 +1345,8 @@ function Calendar({ h, today, mutate, disabled }: Shared) {
           ) : (
             <p>
               <ArrowLeftRight size={18} />
-              Choose an upcoming night, then one belonging to the other person.
+              Choose any night, past or upcoming, then one belonging to the
+              other person.
             </p>
           )}
         </div>
@@ -1365,8 +1361,7 @@ function Calendar({ h, today, mutate, disabled }: Shared) {
           ))}
           {days.map((d) => {
             const who = assignee(h, d);
-            const eligible =
-              canSwap && d >= today && who && who !== selectedPerson;
+            const eligible = canSwap && who && who !== selectedPerson;
             return (
               <button
                 key={d}
@@ -1491,7 +1486,7 @@ function SwapNights({
 }) {
   const a = assignee(h, first),
     b = assignee(h, second);
-  const valid = first >= today && second >= today && a && b && a !== b;
+  const valid = a && b && a !== b;
   return (
     <Modal
       title="Swap these nights?"
@@ -1513,6 +1508,12 @@ function SwapNights({
       ) : (
         <p className="error">
           The calendar has changed. Choose a new pair of nights.
+        </p>
+      )}
+      {(first < today || second < today) && valid && (
+        <p className="hint">
+          This changes a night that has already passed. Both turns still change
+          together.
         </p>
       )}
       <div className="actions">

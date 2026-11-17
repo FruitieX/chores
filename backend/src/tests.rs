@@ -336,6 +336,46 @@ fn paired_calendar_operations_are_idempotent_and_revision_guarded() {
 }
 
 #[test]
+fn past_bedtime_nights_can_be_swapped_and_undone() {
+    let s = server();
+    let mut db = s.conn().unwrap();
+    db.execute(
+        "INSERT INTO household VALUES(1,?1)",
+        [serde_json::to_string(&Household::new(settings())).unwrap()],
+    )
+    .unwrap();
+    let today = domain::date("2026-10-20").unwrap();
+    let m = Mutation {
+        id: "calendar-past-swap".into(),
+        revision: 0,
+        operation: Operation::Swap {
+            first: "2026-10-02".into(),
+            second: "2026-10-03".into(),
+        },
+    };
+    mutate_db(&mut db, "a", m, today).unwrap();
+    let h = read(&db).unwrap();
+    assert_eq!(h.assignee("2026-10-02").unwrap(), "a");
+    assert_eq!(h.assignee("2026-10-03").unwrap(), "b");
+    let id = h.schedule().unwrap().swaps[0].swap.id.clone();
+    mutate_db(
+        &mut db,
+        "b",
+        Mutation {
+            id: "calendar-past-undo".into(),
+            revision: 1,
+            operation: Operation::UndoSwap { id },
+        },
+        today,
+    )
+    .unwrap();
+    let h = read(&db).unwrap();
+    assert_eq!(h.assignee("2026-10-02").unwrap(), "b");
+    assert_eq!(h.assignee("2026-10-03").unwrap(), "a");
+    assert!(h.schedule().unwrap().overrides.is_empty());
+}
+
+#[test]
 fn database_upgrade_preserves_accounts_credits_and_calendar_once() {
     let path =
         std::env::temp_dir().join(format!("chores-migration-{}.sqlite3", uuid::Uuid::new_v4()));
