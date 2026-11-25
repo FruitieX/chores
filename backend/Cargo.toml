@@ -13,7 +13,7 @@ rusqlite = { version = "=0.43.0", features = ["bundled", "backup"] }
 argon2 = "=0.6.0"
 base64 = "=0.23.1"
 rand = "=0.10.4"
-sha2 = "=0.11.1"
+sha2 = "=0.11.2"
 uuid = { version = "=1.29.3", features = ["v4"] }
 chrono = { version = "=0.4.45", features = ["serde"] }
 chrono-tz = "=0.10.4"
